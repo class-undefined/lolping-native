@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import wave
 import zipfile
@@ -46,6 +47,8 @@ def verify_app(app, machine, working, env):
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", required=True, choices=ARCHITECTURES)
     args = parser.parse_args()
@@ -78,6 +81,9 @@ def main():
                 subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], check=False)
                 raise RuntimeError("Installed GUI did not finish the smoke test") from None
         output = stderr.read_text(encoding="utf-8", errors="replace")
+        logs = RELEASE / "verification-logs"
+        logs.mkdir(exist_ok=True)
+        (logs / f"windows-{args.arch}.log").write_text(f"GUI exit code: {code}\n{output}", encoding="utf-8")
         print(output)
         if code != 0 or "Smoke test passed:" not in output:
             raise RuntimeError(f"Installed GUI smoke test failed (exit {code})")
