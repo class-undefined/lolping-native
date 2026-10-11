@@ -6,6 +6,8 @@ use std::{
 };
 
 unsafe extern "C" {
+    fn lp_configure_settings(view: *mut c_void);
+    fn lp_simulate_settings_input(view: *mut c_void, kind: i32, x: f64, y: f64);
     fn lp_configure_overlay(view: *mut c_void, x: f64, y: f64, w: f64, h: f64);
     fn lp_play_sound(path: *const std::ffi::c_char, volume: f32) -> bool;
     fn lp_init_status();
@@ -23,6 +25,16 @@ fn view(window: &Window) -> *mut c_void {
     {
         RawWindowHandle::AppKit(handle) => handle.ns_view.as_ptr(),
         _ => unreachable!("macOS only"),
+    }
+}
+pub fn configure_settings(window: &Window) {
+    unsafe {
+        lp_configure_settings(view(window));
+    }
+}
+pub fn simulate_settings_input(window: &Window, kind: i32, x: f32, y: f32) {
+    unsafe {
+        lp_simulate_settings_input(view(window), kind, x as f64, y as f64);
     }
 }
 pub fn configure_overlay(window: &Window, bounds: Bounds<Pixels>) {

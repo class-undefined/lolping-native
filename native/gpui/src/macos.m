@@ -34,6 +34,42 @@ void lp_init_status(void) {
 int lp_poll_action(void) { int action = (int)pendingAction; pendingAction = 0; return action; }
 void lp_status_enabled(bool enabled) { statusItem.button.title = enabled ? @"◉" : @"◎"; }
 
+void lp_configure_settings(void *view) {
+    NSWindow *window = [(__bridge NSView *)view window];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        window.appearance = [NSAppearance appearanceNamed:NSAppearanceNameDarkAqua];
+        window.titlebarAppearsTransparent = YES;
+        window.backgroundColor = [NSColor colorWithRed:0.094 green:0.129 blue:0.169 alpha:1.0];
+    });
+}
+
+// Smoke tests send events only to their own preview window, without global input injection.
+void lp_simulate_settings_input(void *view, int kind, double x, double y) {
+    NSView *nativeView = (__bridge NSView *)view;
+    NSWindow *window = nativeView.window;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        NSEvent *event;
+        if (kind == 4 || kind == 5) {
+            NSString *key = kind == 4 ? @"\x1b" : @"z";
+            event = [NSEvent keyEventWithType:NSEventTypeKeyDown location:NSZeroPoint
+                modifierFlags:kind == 5 ? NSEventModifierFlagCommand : 0
+                timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber
+                context:nil characters:key charactersIgnoringModifiers:key isARepeat:NO
+                keyCode:kind == 4 ? 53 : 6];
+        } else {
+            const NSEventType types[] = {NSEventTypeMouseMoved, NSEventTypeLeftMouseDown,
+                NSEventTypeLeftMouseDragged, NSEventTypeLeftMouseUp};
+            if (kind < 0 || kind > 3) return;
+            NSPoint point = NSMakePoint(x, nativeView.isFlipped ? y : nativeView.bounds.size.height - y);
+            point = [nativeView convertPoint:point toView:nil];
+            event = [NSEvent mouseEventWithType:types[kind] location:point modifierFlags:0
+                timestamp:NSProcessInfo.processInfo.systemUptime windowNumber:window.windowNumber
+                context:nil eventNumber:0 clickCount:1 pressure:kind == 1 || kind == 2 ? 1.0 : 0.0];
+        }
+        [window sendEvent:event];
+    });
+}
+
 void lp_configure_overlay(void *view, double x, double y, double width, double height) {
     NSWindow *window = [(__bridge NSView *)view window];
     // AppKit emits resize notifications synchronously. Run after GPUI releases its App borrow.

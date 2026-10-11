@@ -5,7 +5,7 @@ use lolping_native::{
     catalog::{PINGS, asset_files, index},
     helper::{Event, Helper},
     pick_slice,
-    settings::{Settings, TRIGGERS},
+    settings::Settings,
 };
 use serde_json::json;
 use std::{
@@ -13,6 +13,10 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+
+mod editor;
+mod wheel;
+use editor::SettingsView;
 
 actions!(lolping, [Quit, OpenSettings, Toggle]);
 
@@ -288,6 +292,7 @@ fn sync_displays(model: &Entity<Model>, cx: &mut App) {
                 cx.new(|cx| {
                     cx.observe(&view_model, |_, _, cx| cx.notify()).detach();
                     Overlay {
+                        highlight: wheel::Highlight::default(),
                         model: view_model,
                         display: id,
                         bounds,
@@ -313,12 +318,12 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
     {
         return;
     }
-    let bounds = Bounds::centered(None, size(px(820.), px(790.)), cx);
+    let bounds = Bounds::centered(None, size(px(1080.), px(680.)), cx);
     let view_model = model.clone();
     match cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(700.), px(540.))),
+            window_min_size: Some(size(px(1000.), px(600.))),
             titlebar: Some(TitlebarOptions {
                 title: Some("lolPing · 设置".into()),
                 ..Default::default()
@@ -326,17 +331,14 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
             ..Default::default()
         },
         |window, cx| {
+            macos::configure_settings(window);
             window.on_window_should_close(cx, |window, _| {
                 macos::hide(window);
                 false
             });
             cx.new(|cx| {
                 cx.observe(&view_model, |_, _, cx| cx.notify()).detach();
-                SettingsView {
-                    model: view_model,
-                    selected: 0,
-                    scroll: ScrollHandle::new(),
-                }
+                SettingsView::new(view_model, window, cx)
             })
         },
     ) {
@@ -347,28 +349,10 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
 }
 
 struct Overlay {
+    highlight: wheel::Highlight,
     model: Entity<Model>,
     display: DisplayId,
     bounds: Bounds<Pixels>,
-}
-
-fn polar(center: Point<Pixels>, r: f32, angle: f32) -> Point<Pixels> {
-    center + point(px(r * angle.cos()), px(r * angle.sin()))
-}
-
-fn sector(center: Point<Pixels>, slot: usize, radius: f32) -> Path<Pixels> {
-    let a = (-112.5 + slot as f32 * 45.).to_radians();
-    let b = a + 45_f32.to_radians();
-    let mut path = PathBuilder::fill();
-    path.move_to(polar(center, 86., a));
-    for i in 0..=16 {
-        path.line_to(polar(center, radius, a + (b - a) * i as f32 / 16.));
-    }
-    for i in (0..=16).rev() {
-        path.line_to(polar(center, 86., a + (b - a) * i as f32 / 16.));
-    }
-    path.close();
-    path.build().expect("valid wheel path")
 }
 
 impl Render for Overlay {
@@ -380,69 +364,29 @@ impl Render for Overlay {
         {
             let center = wheel.origin - self.bounds.origin;
             let hot = wheel.hot;
-            root = root.child(
-                canvas(
-                    |_, _, _| (),
-                    move |bounds, (), window, _| {
-                        for slot in 0..8 {
-                            let color = if hot == Some(slot) {
-                                rgba(0x88826cdf)
-                            } else {
-                                rgba(0x242b32ed)
-                            };
-                            window.paint_path(sector(center + bounds.origin, slot, 188.), color);
-                            let mut border = PathBuilder::stroke(px(1.));
-                            let angle = (-112.5 + slot as f32 * 45.).to_radians();
-                            border.move_to(polar(center + bounds.origin, 86., angle));
-                            border.line_to(polar(center + bounds.origin, 188., angle));
-                            if let Ok(path) = border.build() {
-                                window.paint_path(path, rgba(0xc8aa6e88));
-                            }
-                        }
-                    },
-                )
-                .absolute()
-                .size_full(),
-            );
-            for (slot, id) in model.settings.wheel.iter().enumerate() {
-                let ping = &PINGS[index(id).unwrap_or(8)];
-                let pos = polar(center, 137., (-90. + slot as f32 * 45.).to_radians());
-                let s = if hot == Some(slot) { 58. } else { 48. };
-                root = root.child(
-                    img(model.assets.join(format!("textures/{}.png", ping.icon)))
-                        .absolute()
-                        .left(pos.x - px(s / 2.))
-                        .top(pos.y - px(s / 2.))
-                        .size(px(s)),
-                );
-            }
+            let highlights = self.highlight.frame(hot, window);
             let label = hot
                 .map(|slot| PINGS[index(&model.settings.wheel[slot]).unwrap_or(8)].name)
                 .unwrap_or("选择信号");
+            let sublabel = hot.map(|slot| wheel::DIRECTIONS[slot]).unwrap_or("lolPing");
             root = root.child(
-                div()
-                    .absolute()
-                    .left(center.x - px(86.))
-                    .top(center.y - px(86.))
-                    .size(px(172.))
-                    .rounded_full()
-                    .border_2()
-                    .border_color(rgb(0xc8aa6e))
-                    .bg(rgba(0x123033f5))
-                    .flex()
-                    .flex_col()
-                    .items_center()
-                    .justify_center()
-                    .gap_3()
-                    .text_color(rgb(0xf0dfb9))
-                    .child(img(model.assets.join("textures/generic_ping.png")).size(px(34.)))
-                    .child(label)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(rgb(0x9caeae))
-                            .child("中心松开 / Esc 取消"),
-                    ),
+                wheel::surface(
+                    &model.assets,
+                    &model.settings.wheel,
+                    highlights,
+                    None,
+                    1.,
+                    label,
+                    sublabel,
+                )
+                .absolute()
+                .left(center.x - px(wheel::SURFACE_SIZE / 2.))
+                .top(center.y - px(wheel::SURFACE_SIZE / 2.))
+                .with_animation(
+                    "wheel-open",
+                    Animation::new(Duration::from_millis(160)),
+                    |element, t| element.opacity(wheel::settle(t)),
+                ),
             );
         }
         let mut animating = false;
@@ -499,246 +443,6 @@ impl Render for Overlay {
             window.request_animation_frame();
         }
         root
-    }
-}
-
-struct SettingsView {
-    model: Entity<Model>,
-    selected: usize,
-    scroll: ScrollHandle,
-}
-
-fn button(
-    label: impl Into<SharedString>,
-    active: bool,
-    action: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    let label = label.into();
-    div()
-        .id(label.clone())
-        .px_3()
-        .py_2()
-        .rounded_md()
-        .border_1()
-        .border_color(rgb(if active { 0xc8aa6e } else { 0x36404c }))
-        .bg(rgb(if active { 0x3c382b } else { 0x222a34 }))
-        .text_color(rgb(if active { 0xf0d79e } else { 0xcad2dc }))
-        .text_sm()
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(0x404854)))
-        .child(label)
-        .on_click(move |_, window, cx| action(window, cx))
-}
-
-fn section(title: &'static str) -> Div {
-    div()
-        .p_5()
-        .bg(rgb(0x1a212a))
-        .rounded_lg()
-        .flex()
-        .flex_col()
-        .gap_3()
-        .child(div().text_color(rgb(0xe8d3a4)).text_lg().child(title))
-}
-fn row(label: impl Into<SharedString>, control: impl IntoElement) -> Stateful<Div> {
-    let label = label.into();
-    div()
-        .id(label.clone())
-        .flex()
-        .justify_between()
-        .items_center()
-        .gap_3()
-        .child(div().text_sm().child(label))
-        .child(control)
-}
-
-impl SettingsView {
-    fn toggle_row(
-        &self,
-        label: &'static str,
-        value: bool,
-        mutate: fn(&mut Settings),
-        cx: &Context<Self>,
-    ) -> Stateful<Div> {
-        let model = self.model.clone();
-        let _ = cx;
-        row(
-            label,
-            button(
-                if value { "已开启" } else { "已关闭" },
-                value,
-                move |_, cx| {
-                    model.update(cx, |model, cx| {
-                        mutate(&mut model.settings);
-                        model.save(cx);
-                    });
-                },
-            ),
-        )
-    }
-
-    fn number_row(
-        &self,
-        label: &'static str,
-        value: String,
-        adjust: fn(&mut Settings, f32),
-    ) -> Stateful<Div> {
-        let left = self.model.clone();
-        let right = self.model.clone();
-        row(
-            label,
-            div()
-                .id(label)
-                .flex()
-                .items_center()
-                .gap_3()
-                .child(button("−", false, move |_, cx| {
-                    left.update(cx, |model, cx| {
-                        adjust(&mut model.settings, -1.);
-                        model.save(cx);
-                    })
-                }))
-                .child(div().w(px(80.)).text_center().text_sm().child(value))
-                .child(button("+", false, move |_, cx| {
-                    right.update(cx, |model, cx| {
-                        adjust(&mut model.settings, 1.);
-                        model.save(cx);
-                    })
-                })),
-        )
-    }
-}
-
-impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = self.model.read(cx);
-        let s = model.settings.clone();
-        let enabled = model.enabled;
-        let status = model.status.clone();
-        let notice = model.notice.clone();
-        let assets = model.assets.clone();
-        let pause_model = self.model.clone();
-        let restart_model = self.model.clone();
-        let mut trigger_buttons = div().flex().flex_wrap().gap_2();
-        for &(id, label) in TRIGGERS {
-            let model = self.model.clone();
-            trigger_buttons =
-                trigger_buttons.child(button(label, s.trigger == id, move |_, cx| {
-                    model.update(cx, |model, cx| {
-                        model.settings.trigger = id.into();
-                        model.save(cx);
-                    });
-                }));
-        }
-        let mut palette = div().flex().flex_wrap().gap_2();
-        for (i, ping) in PINGS.iter().enumerate() {
-            palette = palette.child(
-                div()
-                    .id(("ping", i))
-                    .w(px(120.))
-                    .p_2()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(rgb(if i == self.selected {
-                        0xc8aa6e
-                    } else {
-                        0x36404c
-                    }))
-                    .bg(rgb(if i == self.selected {
-                        0x3c382b
-                    } else {
-                        0x222a34
-                    }))
-                    .cursor_pointer()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(img(assets.join(format!("textures/{}.png", ping.icon))).size(px(28.)))
-                    .child(div().text_xs().child(ping.name))
-                    .on_click(cx.listener(move |view, _, _, cx| {
-                        view.selected = i;
-                        view.model.update(cx, |model, cx| model.preview(i, cx));
-                        cx.notify();
-                    })),
-            );
-        }
-        let mut slots = div().flex().flex_wrap().gap_2();
-        for (i, id) in s.wheel.iter().enumerate() {
-            let model = self.model.clone();
-            let selected = self.selected;
-            let name = PINGS[index(id).unwrap_or(8)].name;
-            let direction = ["↑", "↗", "→", "↘", "↓", "↙", "←", "↖"][i];
-            slots = slots.child(button(
-                format!("{direction} {name}"),
-                false,
-                move |_, cx| {
-                    model.update(cx, |model, cx| {
-                        model.settings.place(i, selected);
-                        model.save(cx);
-                    });
-                },
-            ));
-        }
-        let center_model = self.model.clone();
-        let reset_model = self.model.clone();
-        let selected = self.selected;
-        let mut contents = div().flex().flex_col().gap_4().p_6()
-            .child(div().flex().justify_between().items_center()
-                .child(div().flex().flex_col().gap_1().child(div().text_2xl().text_color(rgb(0xf0dfb9)).child("lolPing"))
-                    .child(div().text_sm().text_color(rgb(0x98a6b7)).child("把信号带到整个桌面")))
-                .child(button(if enabled { "运行中 · 点击暂停" } else { "已暂停 · 点击恢复" }, enabled,
-                    move |_, cx| pause_model.update(cx, |model, cx| model.toggle(cx)))))
-            .child(section("输入与权限").child(div().text_sm().child(status))
-                .child(div().flex().gap_2()
-                    .child(button("辅助功能权限", false, |_, cx| cx.open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")))
-                    .child(button("重新连接", false, move |_, cx| restart_model.update(cx, |model, cx| model.restart_helper(cx)))))
-                .child(div().text_xs().text_color(rgb(0x98a6b7)).child("按住触发键并拖动鼠标，松开发信号。⌃⌥P 暂停 / 恢复。"))
-                .child(trigger_buttons)
-                .child(self.toggle_row("触发键 + 单击发送信号", s.click_ping, |s| s.click_ping = !s.click_ping, cx))
-                .child(self.toggle_row("启动时启用信号", s.enabled_on_start, |s| s.enabled_on_start = !s.enabled_on_start, cx))
-                .child(self.number_row("拖动阈值", format!("{} pt", s.drag_threshold_px), |s, n|
-                    s.drag_threshold_px = (s.drag_threshold_px as i32 + n as i32).clamp(2, 40) as u32)))
-            .child(section("信号与声音")
-                .child(self.number_row("信号大小", format!("{:.0} pt", s.ping_size_px), |s, n| s.ping_size_px = (s.ping_size_px + n * 10.).clamp(60., 220.)))
-                .child(self.number_row("显示时长", format!("{:.1} 秒", s.ping_duration_s), |s, n| s.ping_duration_s = ((s.ping_duration_s + n * 0.2) * 10.).round().clamp(10., 80.) / 10.))
-                .child(self.number_row("音量", format!("{}%", s.volume), |s, n| s.volume = (s.volume as i32 + n as i32 * 5).clamp(0, 100) as u32))
-                .child(self.toggle_row("静音", s.muted, |s| s.muted = !s.muted, cx))
-                .child(self.toggle_row("轮盘提示音", s.tick_sound, |s| s.tick_sound = !s.tick_sound, cx)))
-            .child(section("轮盘布局")
-                .child(div().text_sm().text_color(rgb(0x98a6b7)).child("先点信号试听并选中，再点下方方向来放置。已有信号会交换位置。"))
-                .child(palette).child(slots)
-                .child(div().flex().gap_2()
-                    .child(button(format!("单击信号：{} · 点击替换", PINGS[index(&s.click_ping_id).unwrap_or(8)].name), false,
-                        move |_, cx| center_model.update(cx, |model, cx| { model.settings.click_ping_id = PINGS[selected].id.into(); model.save(cx); })))
-                    .child(button("恢复默认布局", false, move |_, cx| reset_model.update(cx, |model, cx| {
-                        model.settings.wheel = Settings::default().wheel;
-                        model.settings.click_ping_id = "generic".into(); model.save(cx);
-                    })))));
-        if !notice.is_empty() {
-            contents = contents.child(div().text_color(rgb(0xf0bb7d)).child(notice));
-        }
-        contents = contents.child(
-            div()
-                .flex()
-                .justify_between()
-                .items_center()
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(rgb(0x98a6b7))
-                        .child("macOS 原生预览版 · 0.1.0"),
-                )
-                .child(button("退出 lolPing", false, |_, cx| cx.quit())),
-        );
-        div()
-            .id("settings-scroll")
-            .track_scroll(&self.scroll)
-            .size_full()
-            .overflow_y_scroll()
-            .bg(rgb(0x111820))
-            .text_color(rgb(0xd4dce6))
-            .font_family(".AppleSystemUIFont")
-            .child(contents)
     }
 }
 
@@ -917,19 +621,10 @@ pub fn run() -> Result<()> {
                             overlay.update(cx, |_, window, _| assert!(macos::overlay_valid(window),
                                 "overlay must be transparent, click-through, nonactivating and on all Spaces")).unwrap();
                         }
-                        let settings = model.read(cx).settings_window.unwrap();
-                        settings.update(cx, |view, _, cx| {
-                            view.scroll.set_offset(point(px(0.), px(-900.)));
-                            cx.notify();
-                        }).unwrap();
                     });
-                    Timer::after(Duration::from_secs(2)).await;
-                    let _ = cx.update(|cx| {
-                        let settings = model.read(cx).settings_window.unwrap();
-                        settings.update(cx, |view, _, _| assert!(view.scroll.offset().y < px(-100.),
-                            "settings must scroll to the wheel editor")).unwrap();
-                        eprintln!("Smoke test passed: helper → wheel → ping, native overlay flags, sound, settings persistence and scrolling");
-                    });
+                    let settings = cx.update(|cx| model.read(cx).settings_window.unwrap()).unwrap();
+                    editor::smoke_test(settings, cx).await;
+                    eprintln!("Smoke test passed: helper → wheel → ping, native overlay flags, sound, settings persistence and editor gestures");
                     Timer::after(Duration::from_secs(2)).await;
                     let _ = cx.update(|cx| cx.quit());
                 }
