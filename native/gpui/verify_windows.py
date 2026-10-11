@@ -63,7 +63,7 @@ def main():
         env = os.environ.copy()
         # Exclude developer tools and isolate user data. No Rust, Python or VC runtime
         # installation is allowed to rescue the installed application's PATH lookup.
-        env["PATH"] = str(pathlib.Path(env["SystemRoot"]) / "System32")
+        env["PATH"] = str(pathlib.Path(os.environ["SYSTEMROOT"]) / "System32")
         env["APPDATA"] = str(working / "用户配置")
         env["LOCALAPPDATA"] = str(working / "本地配置")
         assets = verify_app(app, machine, working, env)
