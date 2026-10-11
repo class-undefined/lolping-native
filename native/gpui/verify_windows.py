@@ -97,8 +97,9 @@ def ensure_desktop_shell():
     find_window.restype = ctypes.c_void_p
     if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
         print("Explorer taskbar and notification area are available", flush=True)
-        return
-    raise RuntimeError("GUI verification requires an interactive desktop with a working notification area")
+        return True
+    print("Reference Win32 tray registration is unavailable; verifying the application's window fallback", flush=True)
+    return False
 
 
 def verify_app(app, machine, working, env):
@@ -129,13 +130,16 @@ def verify_app(app, machine, working, env):
     return assets
 
 
-def gui_smoke(app, working, env, arch, label):
+def gui_smoke(app, working, env, arch, label, tray_available):
     logs = RELEASE / "verification-logs"
     logs.mkdir(exist_ok=True)
     stdout = logs / f"windows-{arch}-{label}.stdout"
     stderr = logs / f"windows-{arch}-{label}.log"
     with stdout.open("w", encoding="utf-8") as output, stderr.open("w", encoding="utf-8") as errors:
-        process = subprocess.Popen([str(app / "lolping-native.exe"), "--smoke-test", "--mute"],
+        command = [str(app / "lolping-native.exe"), "--smoke-test", "--mute"]
+        if not tray_available:
+            command.append("--expect-no-tray")
+        process = subprocess.Popen(command,
             cwd=working, env=env, stdout=output, stderr=errors)
         try:
             code = process.wait(timeout=60)
@@ -144,7 +148,8 @@ def gui_smoke(app, working, env, arch, label):
             code = -1
     output = stderr.read_text(encoding="utf-8", errors="replace")
     print(f"GUI probe {label}: exit {code}\n{output}")
-    return code == 0 and "Smoke test passed:" in output
+    return (code == 0 and "Smoke test passed:" in output
+            and (tray_available or "No-tray close test:" in output))
 
 
 def main():
@@ -154,7 +159,7 @@ def main():
     parser.add_argument("--arch", required=True, choices=ARCHITECTURES)
     parser.add_argument("--desktop-only", action="store_true")
     args = parser.parse_args()
-    ensure_desktop_shell()
+    tray_available = ensure_desktop_shell()
     if args.desktop_only:
         return
     machine = ARCHITECTURES[args.arch][4]
@@ -178,14 +183,14 @@ def main():
         # LOCALAPPDATA belongs to the Windows shell's actual user profile. Replacing
         # it is not a clean app configuration and can break Windows 11 notifications.
         assets = verify_app(app, machine, working, env)
-        if not gui_smoke(app, working, env, args.arch, "installed"):
+        if not gui_smoke(app, working, env, args.arch, "installed", tray_available):
             # These probes diagnose a failure; they never substitute for acceptance
             # of the installed program in a Unicode directory with a minimal PATH.
-            gui_smoke(app, working, os.environ.copy(), args.arch, "original-environment")
+            gui_smoke(app, working, os.environ.copy(), args.arch, "original-environment", tray_available)
             with tempfile.TemporaryDirectory(prefix="lolping-ascii-probe-") as probe:
                 copied = pathlib.Path(probe) / "app"
                 shutil.copytree(app, copied)
-                gui_smoke(copied, probe, os.environ.copy(), args.arch, "ascii-path")
+                gui_smoke(copied, probe, os.environ.copy(), args.arch, "ascii-path", tray_available)
             raise RuntimeError("Installed GUI smoke test failed; see environment/path diagnostic probes")
         portable = working / "便携应用"
         with zipfile.ZipFile(archives[0]) as archive:
@@ -197,9 +202,12 @@ def main():
     report = {
         "architecture": args.arch, "commit": os.environ.get("GITHUB_SHA"),
         "installer": installer.name, "sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
+        "tray_mode": "native_shell" if tray_available else "settings_window_fallback",
         "checks": ["native executable architecture", "static Visual C++ runtime", "Unicode installation path",
                    f"{len(assets)} assets and PCM audio decoding", "real input hook initialization",
-                   "installed GUI: overlays, tray, wheel, editor, undo, persistence", "portable ZIP", "uninstall"],
+                   "installed GUI: overlays, wheel, editor, undo, persistence", "portable ZIP", "uninstall",
+                   "tray initialization and repeated registration" if tray_available else
+                   "independent OS tray failure confirmed; window fallback and close-to-exit verified"],
         "audio_output": "muted in CI; PCM files decoded, speaker playback requires an audio device",
     }
     (RELEASE / f"verification-windows-{args.arch}.json").write_text(

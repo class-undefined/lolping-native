@@ -28,11 +28,15 @@ def main():
         print("A newer main commit exists; this run will not replace the latest release.")
         return
     expected = [f"lolPing-Native-{version}-arm64.{extension}" for extension in ("dmg", "zip")]
+    tray_results = []
     for arch in ("x86_64", "aarch64"):
         expected += [f"lolPing-Native-{version}-windows-{arch}-setup.exe",
                      f"lolPing-Native-{version}-windows-{arch}.zip", f"verification-windows-{arch}.json"]
         report = json.loads((args.artifacts / f"verification-windows-{arch}.json").read_text())
         assert report["architecture"] == arch and report["commit"] == commit
+        assert report["tray_mode"] in ("native_shell", "settings_window_fallback")
+        tray_result = "原生托盘及重复注册通过" if report["tray_mode"] == "native_shell" else "运行器系统托盘 API 不可用；窗口模式与关闭退出通过"
+        tray_results.append(f"- Windows {arch}：{tray_result}。")
         actual = hashlib.sha256((args.artifacts / report["installer"]).read_bytes()).hexdigest()
         assert actual == report["sha256"], "Installer differs from the verified binary"
     assets = [args.artifacts / name for name in expected]
@@ -54,6 +58,9 @@ def main():
 
 Windows 安装包包含原生主程序、输入助手和全部素材，无需安装 Rust、Python、Node.js 或 Visual C++ 运行库。
 两种 Windows 架构均在对应架构的运行器上完成安装、界面启动、输入助手、轮盘、编辑器、配置保存和卸载检查。
+托盘验收结果：
+{chr(10).join(tray_results)}
+
 CI 不输出声音；音频文件完整性与 PCM 解码已检查。音频设备、游戏独占全屏和实际多屏环境仍受系统条件影响。
 
 ZIP 为便携包，请完整解压后运行。macOS 将应用拖入 Applications，首次运行授予辅助功能权限。

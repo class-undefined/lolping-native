@@ -239,6 +239,7 @@ void lp_configure_overlay(void* handle, double x, double y, double width, double
 }
 
 void lp_hide_window(void* handle) { ShowWindowAsync(static_cast<HWND>(handle), SW_HIDE); }
+void lp_request_close(void* handle) { PostMessageW(static_cast<HWND>(handle), WM_CLOSE, 0, 0); }
 void lp_show_window(void* handle) { ShowWindowAsync(static_cast<HWND>(handle), SW_RESTORE); }
 
 bool lp_overlay_valid(void* handle) {

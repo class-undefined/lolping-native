@@ -20,6 +20,8 @@ use editor::SettingsView;
 
 actions!(lolping, [Quit, OpenSettings, Toggle]);
 
+const NO_TRAY_NOTICE: &str = "系统托盘不可用，关闭设置窗口将退出应用。";
+
 struct Wheel {
     origin: Point<Pixels>,
     display: DisplayId,
@@ -489,6 +491,8 @@ pub fn run() -> Result<()> {
     #[cfg(target_os = "windows")]
     let data = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA 未设置")?);
     let smoke = std::env::args().any(|a| a == "--smoke-test");
+    let expect_no_tray =
+        smoke && cfg!(target_os = "windows") && std::env::args().any(|a| a == "--expect-no-tray");
     let simulate = smoke || std::env::args().any(|a| a == "--preview");
     let settings_path = if simulate {
         std::env::temp_dir().join(format!(
@@ -550,7 +554,7 @@ pub fn run() -> Result<()> {
         });
         let tray_available = platform::init_status();
         if !tray_available {
-            model.update(cx, |m, _| m.notice = "系统托盘不可用，关闭设置窗口将退出应用。".into());
+            model.update(cx, |m, _| m.notice = NO_TRAY_NOTICE.into());
         }
         model.update(cx, |m, _| m.tray_available = tray_available);
         platform::set_enabled(enabled);
@@ -649,17 +653,25 @@ pub fn run() -> Result<()> {
                         assert_eq!(m.pings.len(), 1, "simulated drag must create a ping");
                         assert_eq!(m.pings[0].ping, 2, "east selects On My Way");
                         assert!(m.wheel.is_none(), "release must close the wheel");
-                        assert!(m.notice.is_empty(), "sound and assets must load: {}", m.notice);
+                        if expect_no_tray {
+                            assert!(!m.tray_available, "OS probe and app must agree on tray availability");
+                            assert_eq!(m.notice, NO_TRAY_NOTICE, "only the explicit tray fallback is acceptable");
+                        } else {
+                            assert!(m.notice.is_empty(), "sound and assets must load: {}", m.notice);
+                        }
                         m.settings.volume = 35;
                         m.save(cx);
                         assert_eq!(Settings::load(&m.settings_path, &m.settings_path).unwrap().volume, 35);
                     });
                     let _ = cx.update(|cx| {
                         assert!(!model.read(cx).overlays.is_empty(), "at least one overlay must open");
-                        assert!(model.read(cx).tray_available, "system tray must initialize");
+                        assert_eq!(model.read(cx).tray_available, !expect_no_tray,
+                            "app tray availability must match the independent OS probe");
                         #[cfg(target_os = "windows")]
-                        for _ in 0..2 {
-                            assert!(platform::refresh_status(), "repeated tray registration must preserve the icon");
+                        if !expect_no_tray {
+                            for _ in 0..2 {
+                                assert!(platform::refresh_status(), "repeated tray registration must preserve the icon");
+                            }
                         }
                         let overlays: Vec<_> = model.read(cx).overlays.iter().map(|(_, _, _, w)| *w).collect();
                         for overlay in overlays {
@@ -670,6 +682,13 @@ pub fn run() -> Result<()> {
                     let settings = cx.update(|cx| model.read(cx).settings_window.unwrap()).unwrap();
                     editor::smoke_test(settings, cx).await;
                     eprintln!("Smoke test passed: helper → wheel → ping, native overlay flags, settings persistence and editor gestures");
+                    #[cfg(target_os = "windows")]
+                    if expect_no_tray {
+                        eprintln!("No-tray close test: normal window close must terminate the app");
+                        settings.update(cx, |_, window, _| platform::request_close(window)).unwrap();
+                        // No explicit quit: the verifier requires WM_CLOSE to exit successfully.
+                        return;
+                    }
                     Timer::after(Duration::from_secs(2)).await;
                     let _ = cx.update(|cx| cx.quit());
                 }

@@ -18,6 +18,7 @@ unsafe extern "C" {
     fn lp_status_enabled(enabled: bool);
     fn lp_poll_action() -> i32;
     fn lp_hide_window(hwnd: *mut c_void);
+    fn lp_request_close(hwnd: *mut c_void);
     fn lp_show_window(hwnd: *mut c_void);
     fn lp_display_bounds(display: u32, out: *mut f64);
     fn lp_overlay_valid(hwnd: *mut c_void) -> bool;
@@ -68,6 +69,10 @@ pub fn configure_overlay(window: &Window, bounds: Bounds<Pixels>) {
 
 pub fn hide(window: &Window) {
     unsafe { lp_hide_window(handle(window)) }
+}
+
+pub fn request_close(window: &Window) {
+    unsafe { lp_request_close(handle(window)) }
 }
 
 pub fn show(window: &Window) {
