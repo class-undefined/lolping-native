@@ -21,27 +21,69 @@ def run(*args, **kwargs):
     return subprocess.run(args, check=True, encoding="utf-8", errors="replace", **kwargs)
 
 
+def desktop_accepts_tray_icons():
+    """Probe the OS shell independently of Rust, GPUI and the application window."""
+    from ctypes import wintypes as w
+
+    class NotifyIconData(ctypes.Structure):
+        _fields_ = [("cbSize", w.DWORD), ("hWnd", w.HWND), ("uID", w.UINT),
+                    ("uFlags", w.UINT), ("uCallbackMessage", w.UINT), ("hIcon", w.HICON),
+                    ("szTip", w.WCHAR * 128), ("dwState", w.DWORD), ("dwStateMask", w.DWORD),
+                    ("szInfo", w.WCHAR * 256), ("uVersion", w.UINT), ("szInfoTitle", w.WCHAR * 64),
+                    ("dwInfoFlags", w.DWORD), ("guidItem", ctypes.c_ubyte * 16), ("hBalloonIcon", w.HICON)]
+
+    user = ctypes.WinDLL("user32", use_last_error=True)
+    shell = ctypes.WinDLL("shell32", use_last_error=True)
+    ole = ctypes.WinDLL("ole32")
+    user.CreateWindowExW.argtypes = (w.DWORD, w.LPCWSTR, w.LPCWSTR, w.DWORD,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, w.HWND, w.HMENU, w.HINSTANCE, ctypes.c_void_p)
+    user.CreateWindowExW.restype = w.HWND
+    user.DestroyWindow.argtypes = (w.HWND,)
+    user.LoadIconW.argtypes = (w.HINSTANCE, ctypes.c_void_p)
+    user.LoadIconW.restype = w.HICON
+    shell.Shell_NotifyIconW.argtypes = (w.DWORD, ctypes.POINTER(NotifyIconData))
+    shell.Shell_NotifyIconW.restype = w.BOOL
+    initialized = ole.OleInitialize(None) >= 0
+    hwnd = user.CreateWindowExW(0x80, "STATIC", "lolPing CI shell probe", 0x80000000,
+                               0, 0, 0, 0, None, None, None, None)
+    data = NotifyIconData()
+    data.cbSize = ctypes.sizeof(data)
+    data.hWnd, data.uID, data.uFlags = hwnd, 1, 7
+    data.uCallbackMessage = 0x8020
+    data.hIcon = user.LoadIconW(None, 32512)
+    data.szTip = "lolPing CI shell probe"
+    added = bool(shell.Shell_NotifyIconW(0, ctypes.byref(data))) if hwnd else False
+    print(f"Independent shell tray probe: added={added}, last_error={ctypes.get_last_error()}", flush=True)
+    if added:
+        shell.Shell_NotifyIconW(2, ctypes.byref(data))
+    if hwnd:
+        user.DestroyWindow(hwnd)
+    if initialized:
+        ole.OleUninitialize()
+    return added
+
+
 def ensure_desktop_shell():
     # The Windows ARM runner can log in without starting Explorer. Test the real
     # notification area in a normal desktop session, rather than skipping tray checks.
     find_window = ctypes.WinDLL("user32", use_last_error=True).FindWindowW
     find_window.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
     find_window.restype = ctypes.c_void_p
-    if find_window("Shell_TrayWnd", None):
-        print("Explorer taskbar is available")
+    if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
+        print("Explorer taskbar and notification area are available", flush=True)
         return
     if os.environ.get("GITHUB_ACTIONS") != "true":
         raise RuntimeError("GUI verification needs a logged-in desktop with Explorer running")
-    print("Starting Explorer for the CI desktop session")
+    print("Restarting the CI desktop shell to initialize its notification area", flush=True)
+    subprocess.run(["taskkill", "/F", "/IM", "explorer.exe"], check=False, capture_output=True)
     subprocess.Popen([str(pathlib.Path(os.environ["SYSTEMROOT"]) / "explorer.exe")],
                      stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(60):
-        if find_window("Shell_TrayWnd", None):
-            time.sleep(2)
+        if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
             print("Explorer taskbar initialized")
             return
         time.sleep(0.5)
-    raise RuntimeError("CI desktop has no Explorer taskbar after 30 seconds")
+    raise RuntimeError("CI desktop notification area cannot register a standalone Win32 icon")
 
 
 def verify_app(app, machine, working, env):
