@@ -1,7 +1,11 @@
-# Run from an x64 Visual Studio Developer PowerShell (MSVC + Windows SDK).
+# Run from a Visual Studio Developer PowerShell targeting x64 or ARM64.
+param([ValidateSet('x64', 'arm64')][string]$Architecture = $env:VSCMD_ARG_TGT_ARCH)
 $ErrorActionPreference = 'Stop'
 if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
-    throw 'cl.exe not found. Use an x64 Visual Studio Developer PowerShell.'
+    throw 'cl.exe not found. Use a Visual Studio Developer PowerShell.'
+}
+if ($Architecture -and $env:VSCMD_ARG_TGT_ARCH -ne $Architecture) {
+    throw "Expected MSVC target $Architecture; developer environment targets $env:VSCMD_ARG_TGT_ARCH"
 }
 Push-Location $PSScriptRoot
 try {

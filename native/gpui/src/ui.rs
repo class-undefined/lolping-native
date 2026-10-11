@@ -498,7 +498,7 @@ pub fn run() -> Result<()> {
     } else {
         data.join("lolPing-native/settings.json")
     };
-    let (settings, notice) = if simulate {
+    let (mut settings, notice) = if simulate {
         (Settings::default(), String::new())
     } else {
         match Settings::load(&settings_path, &data.join("lolPing/settings.json")) {
@@ -506,6 +506,10 @@ pub fn run() -> Result<()> {
             Err(e) => (Settings::default(), format!("使用默认设置：{e}")),
         }
     };
+    // CI has no speakers; this flag is limited to temporary preview/test settings.
+    if simulate && std::env::args().any(|a| a == "--mute") {
+        settings.muted = true;
+    }
     fs::create_dir_all(settings_path.parent().unwrap())?;
     let lock = fs::OpenOptions::new()
         .create(true)
@@ -603,6 +607,12 @@ pub fn run() -> Result<()> {
         .detach();
         if simulate {
             cx.spawn(async move |cx| {
+                // Slow GPUs and antivirus scans can delay the first helper handshake.
+                for _ in 0..100 {
+                    let ready = model.update(cx, |m, _| m.status.starts_with("预览模式")).unwrap();
+                    if ready { break; }
+                    Timer::after(Duration::from_millis(100)).await;
+                }
                 Timer::after(Duration::from_secs(1)).await;
                 let _ = model.update(cx, |m, cx| {
                     if let Some(d) = cx.primary_display() {
@@ -645,6 +655,8 @@ pub fn run() -> Result<()> {
                         assert_eq!(Settings::load(&m.settings_path, &m.settings_path).unwrap().volume, 35);
                     });
                     let _ = cx.update(|cx| {
+                        assert!(!model.read(cx).overlays.is_empty(), "at least one overlay must open");
+                        assert!(model.read(cx).tray_available, "system tray must initialize");
                         let overlays: Vec<_> = model.read(cx).overlays.iter().map(|(_, _, _, w)| *w).collect();
                         for overlay in overlays {
                             overlay.update(cx, |_, window, _| assert!(platform::overlay_valid(window),
@@ -653,7 +665,7 @@ pub fn run() -> Result<()> {
                     });
                     let settings = cx.update(|cx| model.read(cx).settings_window.unwrap()).unwrap();
                     editor::smoke_test(settings, cx).await;
-                    eprintln!("Smoke test passed: helper → wheel → ping, native overlay flags, sound, settings persistence and editor gestures");
+                    eprintln!("Smoke test passed: helper → wheel → ping, native overlay flags, settings persistence and editor gestures");
                     Timer::after(Duration::from_secs(2)).await;
                     let _ = cx.update(|cx| cx.quit());
                 }

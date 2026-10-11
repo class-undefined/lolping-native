@@ -10,6 +10,15 @@ mod platform;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
+    let result = run();
+    #[cfg(target_os = "windows")]
+    if let Err(error) = &result {
+        platform::report_startup_error(&format!("{error:#}"));
+    }
+    result
+}
+
+fn run() -> anyhow::Result<()> {
     struct Logger;
     impl log::Log for Logger {
         fn enabled(&self, metadata: &log::Metadata) -> bool {

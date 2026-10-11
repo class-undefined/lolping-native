@@ -147,6 +147,10 @@ void reapSounds() {
 } // namespace
 
 extern "C" {
+void lp_report_error(const wchar_t* message) {
+    MessageBoxW(nullptr, message, L"lolPing Native", MB_OK | MB_ICONERROR);
+}
+
 bool lp_init_status() {
     const auto instance = GetModuleHandleW(nullptr);
     WNDCLASSW klass{};

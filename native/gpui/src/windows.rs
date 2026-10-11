@@ -20,6 +20,19 @@ unsafe extern "C" {
     fn lp_show_window(hwnd: *mut c_void);
     fn lp_display_bounds(display: u32, out: *mut f64);
     fn lp_overlay_valid(hwnd: *mut c_void) -> bool;
+    fn lp_report_error(message: *const u16);
+}
+
+pub fn report_startup_error(message: &str) {
+    // Automated probes need an exit code, not a modal dialog that blocks the runner.
+    if std::env::args().any(|a| a == "--smoke-test" || a == "--list-assets") {
+        return;
+    }
+    let text = format!(
+        "lolPing 无法启动。\n\n{message}\n\n请确认安装完整，或从系统托盘打开已运行的应用。"
+    );
+    let text: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
+    unsafe { lp_report_error(text.as_ptr()) }
 }
 
 fn handle(window: &Window) -> *mut c_void {

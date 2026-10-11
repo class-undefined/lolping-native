@@ -1,6 +1,6 @@
 # lolPing 原生桌面版
 
-这是 Rust + GPUI 桌面应用，支持 Windows x64 和 Apple 芯片 Mac。两平台共用轮盘、设置页和输入协议，分别实现悬浮窗、菜单栏或系统托盘，以及音效。
+这是 Rust + GPUI 桌面应用，支持 Windows x86_64、Windows ARM64 和 Apple 芯片 Mac。两平台共用轮盘、设置页和输入协议，分别实现悬浮窗、菜单栏或系统托盘，以及音效。
 
 ## 开发与打包
 
@@ -9,9 +9,9 @@
 | 平台 | 输入助手 | 启动 | 打包 |
 | --- | --- | --- | --- |
 | macOS | `sh native/hook-helper/build.sh` | `cargo run --locked -p lolping-native` | `sh native/gpui/dmg.sh` |
-| Windows | `./native/hook-helper/build.ps1` | `cargo run --locked -p lolping-native` | `python native/gpui/bundle_windows.py` |
+| Windows | `./native/hook-helper/build.ps1` | `cargo run --locked -p lolping-native` | `python native/gpui/bundle_windows.py --arch x86_64` |
 
-Windows 命令需在 x64 Visual Studio Developer PowerShell 中执行。DMG、安装 EXE 和 ZIP 均输出到 `release/native/`。版本号统一读取 `native/gpui/Cargo.toml`。
+Windows 命令需在目标架构对应的 Visual Studio Developer PowerShell 中执行。ARM64 打包使用 `--arch aarch64`。DMG、安装 EXE 和 ZIP 均输出到 `release/native/`。版本号统一读取 `native/gpui/Cargo.toml`。
 
 ## 平台实现
 
@@ -20,4 +20,4 @@ Windows 命令需在 x64 Visual Studio Developer PowerShell 中执行。DMG、�
 - `src/ui.rs`：共用状态、显示器管理和悬浮层绘制。Windows 全局坐标保持物理像素，绘制及方向判定时按所在显示器缩放换算。
 - `windows-installer.iss`：Inno Setup 安装配置，按当前用户安装。
 
-[Native builds 工作流](../../.github/workflows/native.yml) 在推送、Pull Request 和手动运行时生成两平台产物。构建、单元测试、输入协议测试和安装内容检查由 CI 执行；真实输入、多屏及全屏场景需要实机验收。
+[Native builds 工作流](../../.github/workflows/native.yml) 在推送、Pull Request 和手动运行时生成两平台产物。CI 执行构建、单元测试、输入协议测试、安装及 GUI 验收。向 `main` 推送后，所有平台通过才会自动发布 GitHub Release；真实多屏和游戏全屏场景受设备环境影响。

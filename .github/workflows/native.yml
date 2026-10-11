@@ -48,19 +48,32 @@ jobs:
           retention-days: 14
 
   windows:
-    name: Windows x64 · EXE
-    runs-on: windows-2022
+    name: Windows ${{ matrix.arch }} · EXE
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
-    env:
-      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: windows-2022
+            msvc: x64
+            python: x64
+            target: x86_64-pc-windows-msvc
+          - arch: aarch64
+            runner: windows-11-arm
+            msvc: arm64
+            python: arm64
+            target: aarch64-pc-windows-msvc
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
+          architecture: ${{ matrix.python }}
       - uses: ilammy/msvc-dev-cmd@v1
         with:
-          arch: x64
+          arch: ${{ matrix.msvc }}
       - name: Locate Windows shader compiler
         shell: pwsh
         run: |
@@ -68,51 +81,58 @@ jobs:
             Sort-Object FullName -Descending | Select-Object -First 1
           if (-not $fxc) { throw 'Windows SDK fxc.exe not found' }
           "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
-      - name: Install Rust
+      - name: Install native Rust toolchain
         run: |
-          rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+          rustup toolchain install 1.94.1-${{ matrix.target }} --profile minimal --component rustfmt,clippy
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup default 1.94.1
+          rustup default 1.94.1-${{ matrix.target }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustc -vV
       - uses: Swatinem/rust-cache@v2
         with:
-          key: windows-x64
+          key: windows-${{ matrix.arch }}
           cache-on-failure: true
-      - name: Build and test input helper
+      - name: Build and test native input helper
         run: |
-          ./native/hook-helper/build.ps1
+          ./native/hook-helper/build.ps1 -Architecture ${{ matrix.msvc }}
           ./native/hook-helper/build/helper_tests.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - run: cargo fmt --all --check
       - run: cargo test --locked -p lolping-native
       - run: cargo clippy --locked -p lolping-native --all-targets -- -D warnings
       - name: Build installer and portable ZIP
-        run: python native/gpui/bundle_windows.py
-      - name: Verify installer payload
-        shell: pwsh
-        run: |
-          $installer = Get-ChildItem release/native/*-setup.exe | Select-Object -First 1
-          $destination = Join-Path $env:RUNNER_TEMP 'lolPing 安装测试'
-          $process = Start-Process $installer.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"" -Wait -PassThru
-          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-          if (-not (Test-Path "$destination/hook-helper.exe")) { throw 'Missing input helper' }
-          # Windows GUI executables must be explicitly awaited before reading output.
-          $stdout = Join-Path $env:RUNNER_TEMP 'lolping-assets.txt'
-          $stderr = Join-Path $env:RUNNER_TEMP 'lolping-assets-error.txt'
-          $app = Start-Process "$destination/lolping-native.exe" -ArgumentList '--list-assets' -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-          if ($app.ExitCode -ne 0) {
-            Get-Content $stderr
-            throw "Installed executable failed: $($app.ExitCode)"
-          }
-          $assets = Get-Content $stdout
-          if (-not $assets) { throw 'Installed executable returned an empty asset manifest' }
-          foreach ($asset in $assets) {
-            if (-not (Test-Path "$destination/assets/$asset")) { throw "Missing asset: $asset" }
-          }
+        run: python native/gpui/bundle_windows.py --arch ${{ matrix.arch }}
+      - name: Install, launch, test and uninstall shipped application
+        timeout-minutes: 5
+        run: python native/gpui/verify_windows.py --arch ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         with:
-          name: lolPing-native-windows-x64
+          name: lolPing-native-windows-${{ matrix.arch }}
           path: |
             release/native/*-setup.exe
-            release/native/*-windows-x64.zip
+            release/native/*-windows-${{ matrix.arch }}.zip
+            release/native/verification-windows-${{ matrix.arch }}.json
           if-no-files-found: error
           retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: [macos, windows]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: native-release-main
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: lolPing-native-*
+          path: release/downloads
+          merge-multiple: true
+      - name: Publish all verified architectures together
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 native/gpui/publish_release.py release/downloads
