@@ -350,7 +350,8 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
             window.on_window_should_close(cx, move |window, cx| {
                 if !tray_available {
                     cx.quit();
-                    return true;
+                    // App shutdown owns window teardown; do not destroy it twice.
+                    return false;
                 }
                 platform::hide(window);
                 false

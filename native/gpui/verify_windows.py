@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import traceback
 import uuid
 import wave
@@ -198,6 +199,12 @@ def main():
         portable_app = next(portable.iterdir())
         verify_app(portable_app, machine, working, env)
         run(str(app / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", timeout=60)
+        # Inno's second-stage process removes its own executable asynchronously,
+        # especially under x86 emulation on ARM. Wait before deleting the test tree.
+        deadline = time.monotonic() + 30
+        while (app / "unins000.exe").exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert not (app / "unins000.exe").exists(), "Uninstaller cleanup did not finish"
         assert not (app / "lolping-native.exe").exists(), "Uninstall left the application behind"
     report = {
         "architecture": args.arch, "commit": os.environ.get("GITHUB_SHA"),
