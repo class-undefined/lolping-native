@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
+import traceback
 import wave
 import zipfile
 
@@ -69,44 +69,10 @@ def ensure_desktop_shell():
     find_window = ctypes.WinDLL("user32", use_last_error=True).FindWindowW
     find_window.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
     find_window.restype = ctypes.c_void_p
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        import winreg
-        # Only prepare the disposable CI desktop. The installer/application never
-        # change a user's notification policies.
-        for hive, hive_name in [(winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")]:
-            for key_path, value_name, enabled_value in [
-                (r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", "NoTrayItemsDisplay", 0),
-                (r"Software\Policies\Microsoft\Windows\Explorer", "DisableNotificationCenter", 0),
-            ]:
-                try:
-                    with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
-                        value, _ = winreg.QueryValueEx(key, value_name)
-                        print(f"CI shell policy {hive_name}/{value_name}={value}", flush=True)
-                        if value != enabled_value:
-                            winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, enabled_value)
-                except FileNotFoundError:
-                    print(f"CI shell policy {hive_name}/{value_name}: not set", flush=True)
-        run("powershell.exe", "-NoProfile", "-Command",
-            "Get-CimInstance Win32_Process -Filter \"Name='explorer.exe'\" | ForEach-Object { "
-            "$owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner; "
-            "[pscustomobject]@{ PID=$_.ProcessId; Session=$_.SessionId; User=$owner.User } "
-            "} | ConvertTo-Json -Compress")
-        print(f"CI job user: {os.environ.get('USERNAME')}", flush=True)
     if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
         print("Explorer taskbar and notification area are available", flush=True)
         return
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise RuntimeError("GUI verification needs a logged-in desktop with Explorer running")
-    print("Restarting the CI desktop shell to initialize its notification area", flush=True)
-    subprocess.run(["taskkill", "/F", "/IM", "explorer.exe"], check=False, capture_output=True)
-    subprocess.Popen([str(pathlib.Path(os.environ["SYSTEMROOT"]) / "explorer.exe")],
-                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    for _ in range(60):
-        if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
-            print("Explorer taskbar initialized")
-            return
-        time.sleep(0.5)
-    raise RuntimeError("CI desktop notification area cannot register a standalone Win32 icon")
+    raise RuntimeError("GUI verification requires an interactive desktop with a working notification area")
 
 
 def verify_app(app, machine, working, env):
@@ -216,4 +182,25 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:2] == ["--ci-context"]:
+        context = json.loads(pathlib.Path(sys.argv[2]).read_text(encoding="utf-8"))
+        os.environ.update({key: value for key, value in context["environment"].items() if value is not None})
+        sys.argv = [sys.argv[0], "--arch", context["architecture"]]
+        if context["desktop_only"]:
+            sys.argv.append("--desktop-only")
+        code = 1
+        with pathlib.Path(context["log"]).open("w", encoding="utf-8", buffering=1) as log:
+            sys.stdout = sys.stderr = log
+            try:
+                main()
+                code = 0
+            except BaseException:
+                traceback.print_exc()
+            finally:
+                result = pathlib.Path(context["result"])
+                temporary = result.with_suffix(".tmp")
+                temporary.write_text(json.dumps({"exit_code": code}), encoding="utf-8")
+                temporary.replace(result)
+        sys.exit(code)
+    else:
+        main()

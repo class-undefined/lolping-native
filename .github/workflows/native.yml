@@ -76,7 +76,7 @@ jobs:
         with:
           arch: ${{ matrix.msvc }}
       - name: Prepare and probe desktop notification area
-        run: python native/gpui/verify_windows.py --arch ${{ matrix.arch }} --desktop-only
+        run: ./native/gpui/verify_windows.ps1 -Architecture ${{ matrix.arch }} -DesktopOnly
       - name: Locate Windows shader compiler
         shell: pwsh
         run: |
@@ -107,7 +107,7 @@ jobs:
         run: python native/gpui/bundle_windows.py --arch ${{ matrix.arch }}
       - name: Install, launch, test and uninstall shipped application
         timeout-minutes: 5
-        run: python native/gpui/verify_windows.py --arch ${{ matrix.arch }}
+        run: ./native/gpui/verify_windows.ps1 -Architecture ${{ matrix.arch }}
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
