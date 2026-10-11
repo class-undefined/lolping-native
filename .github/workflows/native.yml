@@ -75,6 +75,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.msvc }}
+      - name: Prepare and probe desktop notification area
+        run: python native/gpui/verify_windows.py --arch ${{ matrix.arch }} --desktop-only
       - name: Locate Windows shader compiler
         shell: pwsh
         run: |

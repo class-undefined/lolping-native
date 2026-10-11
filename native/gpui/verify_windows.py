@@ -69,6 +69,29 @@ def ensure_desktop_shell():
     find_window = ctypes.WinDLL("user32", use_last_error=True).FindWindowW
     find_window.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
     find_window.restype = ctypes.c_void_p
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        import winreg
+        # Only prepare the disposable CI desktop. The installer/application never
+        # change a user's notification policies.
+        for hive, hive_name in [(winreg.HKEY_CURRENT_USER, "HKCU"), (winreg.HKEY_LOCAL_MACHINE, "HKLM")]:
+            for key_path, value_name, enabled_value in [
+                (r"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer", "NoTrayItemsDisplay", 0),
+                (r"Software\Policies\Microsoft\Windows\Explorer", "DisableNotificationCenter", 0),
+            ]:
+                try:
+                    with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_SET_VALUE) as key:
+                        value, _ = winreg.QueryValueEx(key, value_name)
+                        print(f"CI shell policy {hive_name}/{value_name}={value}", flush=True)
+                        if value != enabled_value:
+                            winreg.SetValueEx(key, value_name, 0, winreg.REG_DWORD, enabled_value)
+                except FileNotFoundError:
+                    print(f"CI shell policy {hive_name}/{value_name}: not set", flush=True)
+        run("powershell.exe", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process -Filter \"Name='explorer.exe'\" | ForEach-Object { "
+            "$owner = Invoke-CimMethod -InputObject $_ -MethodName GetOwner; "
+            "[pscustomobject]@{ PID=$_.ProcessId; Session=$_.SessionId; User=$owner.User } "
+            "} | ConvertTo-Json -Compress")
+        print(f"CI job user: {os.environ.get('USERNAME')}", flush=True)
     if find_window("Shell_TrayWnd", None) and desktop_accepts_tray_icons():
         print("Explorer taskbar and notification area are available", flush=True)
         return
@@ -137,8 +160,11 @@ def main():
     sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", required=True, choices=ARCHITECTURES)
+    parser.add_argument("--desktop-only", action="store_true")
     args = parser.parse_args()
     ensure_desktop_shell()
+    if args.desktop_only:
+        return
     machine = ARCHITECTURES[args.arch][4]
     installers = list(RELEASE.glob(f"*-windows-{args.arch}-setup.exe"))
     archives = list(RELEASE.glob(f"*-windows-{args.arch}.zip"))
