@@ -22,8 +22,7 @@ unsafe extern "C" {
 }
 
 fn handle(window: &Window) -> *mut c_void {
-    match window
-        .window_handle()
+    match HasWindowHandle::window_handle(window)
         .expect("Windows window handle")
         .as_raw()
     {
