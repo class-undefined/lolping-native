@@ -95,8 +95,16 @@ jobs:
           $process = Start-Process $installer.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
           if (-not (Test-Path "$destination/hook-helper.exe")) { throw 'Missing input helper' }
-          $assets = & "$destination/lolping-native.exe" --list-assets
-          if ($LASTEXITCODE -ne 0 -or -not $assets) { throw 'Installed executable failed' }
+          # Windows GUI executables must be explicitly awaited before reading output.
+          $stdout = Join-Path $env:RUNNER_TEMP 'lolping-assets.txt'
+          $stderr = Join-Path $env:RUNNER_TEMP 'lolping-assets-error.txt'
+          $app = Start-Process "$destination/lolping-native.exe" -ArgumentList '--list-assets' -Wait -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
+          if ($app.ExitCode -ne 0) {
+            Get-Content $stderr
+            throw "Installed executable failed: $($app.ExitCode)"
+          }
+          $assets = Get-Content $stdout
+          if (-not $assets) { throw 'Installed executable returned an empty asset manifest' }
           foreach ($asset in $assets) {
             if (-not (Test-Path "$destination/assets/$asset")) { throw "Missing asset: $asset" }
           }
