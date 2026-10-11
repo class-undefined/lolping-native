@@ -745,7 +745,7 @@ impl Render for SettingsView {
         let wheel = self.wheel_editor(&settings, &assets, window, cx);
         let controls = self.controls(&settings);
         div().id("settings-root").track_focus(&self.focus).size_full().flex().flex_col()
-            .bg(rgb(BG)).text_color(rgb(TEXT)).font_family(".AppleSystemUIFont")
+            .bg(rgb(BG)).text_color(rgb(TEXT)).font_family(platform::FONT)
             .on_mouse_down(MouseButton::Left, cx.listener(|view, _, window, _| view.focus.focus(window)))
             .on_mouse_up(MouseButton::Left, cx.listener(|view, _, _, cx| { view.pressed_slot = None; cx.notify(); }))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|view, _, _, cx| { view.pressed_slot = None; cx.notify(); }))
@@ -753,7 +753,7 @@ impl Render for SettingsView {
                 if event.keystroke.key == "escape" {
                     cx.stop_active_drag(window);
                     view.selected = None; view.pressed_slot = None; view.hot = None; cx.notify(); cx.stop_propagation();
-                } else if event.keystroke.key == "z" && event.keystroke.modifiers.platform && !cx.has_active_drag() {
+                } else if event.keystroke.key == "z" && (if cfg!(target_os = "macos") { event.keystroke.modifiers.platform } else { event.keystroke.modifiers.control }) && !cx.has_active_drag() {
                     view.undo_layout(cx);
                     cx.stop_propagation();
                 }
@@ -776,7 +776,7 @@ impl Render for SettingsView {
                     .child(div().size(px(6.)).bg(rgb(if connected { 0x72cfa7 } else { 0xe1ad68 })))
                     .child(div().text_size(px(11.)).text_color(rgb(MUTED)).child(if preview_ready { "预览模式".to_owned() } else { status })))
                 .child(div().flex().items_center().gap_2()
-                    .child(button("permissions", "辅助功能权限", false, |_, cx| cx.open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")).h(px(24.)))
+                    .when(cfg!(target_os = "macos"), |row| row.child(button("permissions", "辅助功能权限", false, |_, cx| cx.open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")).h(px(24.))))
                     .child(button("reconnect", "重新连接", false, move |_, cx| restart_model.update(cx, |model, cx| model.restart_helper(cx))).h(px(24.)))
                     .child(button("quit", "退出", false, |_, cx| cx.quit()).h(px(24.)))))
     }

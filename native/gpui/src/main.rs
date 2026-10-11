@@ -1,6 +1,12 @@
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 #[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
+#[path = "macos.rs"]
+mod platform;
+#[cfg(target_os = "windows")]
+#[path = "windows.rs"]
+mod platform;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 mod ui;
 
 fn main() -> anyhow::Result<()> {
@@ -25,8 +31,8 @@ fn main() -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     return ui::run();
-    #[cfg(not(target_os = "macos"))]
-    anyhow::bail!("The native UI currently supports macOS only.");
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    anyhow::bail!("The native UI supports macOS and Windows.");
 }

@@ -8,6 +8,11 @@ use std::{
     process::{Child, ChildStdin, Command, Stdio},
 };
 
+#[cfg(target_os = "windows")]
+pub const HELPER_NAME: &str = "hook-helper.exe";
+#[cfg(not(target_os = "windows"))]
+pub const HELPER_NAME: &str = "hook-helper";
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Event {
@@ -54,6 +59,11 @@ pub struct Helper {
 impl Helper {
     pub fn start(path: &Path, simulate: bool) -> Result<(Self, Receiver<Event>)> {
         let mut command = Command::new(path);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW; keep JSON pipes available.
+        }
         if simulate {
             command.arg("--simulate");
         }

@@ -5,6 +5,7 @@ import plistlib
 import shutil
 import subprocess
 import tempfile
+import json
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 RELEASE = ROOT / "release" / "native"
@@ -15,6 +16,9 @@ def run(*args, **kwargs):
 
 
 def main():
+    metadata = json.loads(run("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1",
+                              capture_output=True, text=True).stdout)
+    version = next(p["version"] for p in metadata["packages"] if p["name"] == "lolping-native")
     run("sh", "native/hook-helper/build.sh")
     run("cargo", "build", "--locked", "--release", "-p", "lolping-native")
     binary = ROOT / "target" / "release" / "lolping-native"
@@ -34,6 +38,7 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT / "assets" / name, destination)
         shutil.copy2(ROOT / "LICENSE", resources / "LICENSE")
+        shutil.copy2(ROOT / "NOTICE.md", resources / "NOTICE.md")
         # Use Apple's icon tooling instead of shipping an icon-generation runtime.
         iconset = pathlib.Path(staging) / "AppIcon.iconset"
         iconset.mkdir()
@@ -46,7 +51,7 @@ def main():
         info = {
             "CFBundleIdentifier": "com.lolping.native", "CFBundleName": "lolPing Native",
             "CFBundleDisplayName": "lolPing Native", "CFBundleExecutable": "lolping-native",
-            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0",
+            "CFBundlePackageType": "APPL", "CFBundleShortVersionString": version,
             "CFBundleVersion": "1", "CFBundleIconFile": "AppIcon",
             "LSMinimumSystemVersion": "12.0", "NSHighResolutionCapable": True,
             "NSSupportsAutomaticGraphicsSwitching": True,
@@ -60,7 +65,7 @@ def main():
         if destination.exists():
             shutil.rmtree(destination)
         shutil.move(str(app), destination)
-    archive = RELEASE / "lolPing-Native-0.1.0-arm64.zip"
+    archive = RELEASE / f"lolPing-Native-{version}-arm64.zip"
     if archive.exists():
         archive.unlink()
     run("ditto", "-c", "-k", "--sequesterRsrc", "--keepParent", str(destination), str(archive))

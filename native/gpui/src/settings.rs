@@ -38,11 +38,22 @@ impl Default for Settings {
     }
 }
 
+#[cfg(target_os = "macos")]
 pub const TRIGGERS: &[(&str, &str)] = &[
     ("alt", "⌥ Option"),
     ("ctrl", "⌃ Control"),
     ("shift", "⇧ Shift"),
     ("win", "⌘ Command"),
+    ("mouse4", "鼠标侧键 4"),
+    ("mouse5", "鼠标侧键 5"),
+];
+
+#[cfg(not(target_os = "macos"))]
+pub const TRIGGERS: &[(&str, &str)] = &[
+    ("alt", "Alt"),
+    ("ctrl", "Ctrl"),
+    ("shift", "Shift"),
+    ("win", "Windows"),
     ("mouse4", "鼠标侧键 4"),
     ("mouse5", "鼠标侧键 5"),
 ];
@@ -169,6 +180,18 @@ mod tests {
         assert_eq!(s.trigger, "alt");
         assert!(s.muted);
         assert_eq!(s.wheel, Settings::default().wheel);
+    }
+    #[test]
+    fn saving_twice_replaces_existing_settings_in_unicode_directory() {
+        let dir = std::env::temp_dir().join(format!("lolping-设置-test-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let mut settings = Settings::default();
+        settings.save(&path).unwrap();
+        settings.volume = 23;
+        settings.save(&path).unwrap();
+        assert_eq!(Settings::load(&path, &path).unwrap(), settings);
+        assert!(!path.with_extension("json.tmp").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn placement_swaps_and_legacy_roundtrip_preserves_supported_fields() {

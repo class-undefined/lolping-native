@@ -1,5 +1,5 @@
 use lolping_native::{
-    helper::{Event, Helper},
+    helper::{Event, HELPER_NAME, Helper},
     settings::Settings,
 };
 use serde_json::{Value, json};
@@ -9,10 +9,12 @@ use std::{
 };
 
 fn simulate(commands: Vec<Value>) -> Vec<Event> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../hook-helper/build/hook-helper");
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../hook-helper/build")
+        .join(HELPER_NAME);
     assert!(
         path.is_file(),
-        "Run sh native/hook-helper/build.sh before cargo test"
+        "Build native/hook-helper with build.sh (macOS) or build.ps1 (Windows) before cargo test"
     );
     let (mut helper, receiver) = Helper::start(&path, true).unwrap();
     helper

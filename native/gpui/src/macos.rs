@@ -5,6 +5,11 @@ use std::{
     path::Path,
 };
 
+pub const FONT: &str = ".AppleSystemUIFont";
+pub const QUIT_KEY: &str = "cmd-q";
+pub const SETTINGS_KEY: &str = "cmd-,";
+pub const UNDO_KEY: &str = "cmd-z";
+
 unsafe extern "C" {
     fn lp_configure_settings(view: *mut c_void);
     fn lp_simulate_settings_input(view: *mut c_void, kind: i32, x: f64, y: f64);
@@ -60,10 +65,16 @@ pub fn play(path: &Path, volume: u32) -> bool {
     };
     unsafe { lp_play_sound(path.as_ptr(), volume as f32 / 100.) }
 }
-pub fn init_status() {
+pub fn init_status() -> bool {
     unsafe {
         lp_init_status();
     }
+    true
+}
+pub fn shutdown() {}
+pub fn show(_window: &Window) {}
+pub fn display_scale(_id: DisplayId) -> f32 {
+    1.
 }
 pub fn set_enabled(enabled: bool) {
     unsafe {

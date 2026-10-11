@@ -1,9 +1,9 @@
-use crate::macos;
+use crate::platform;
 use anyhow::{Context as _, Result};
 use gpui::{prelude::*, *};
 use lolping_native::{
     catalog::{PINGS, asset_files, index},
-    helper::{Event, Helper},
+    helper::{Event, HELPER_NAME, Helper},
     pick_slice,
     settings::Settings,
 };
@@ -24,6 +24,7 @@ struct Wheel {
     origin: Point<Pixels>,
     display: DisplayId,
     hot: Option<usize>,
+    scale: f32,
 }
 struct PlacedPing {
     origin: Point<Pixels>,
@@ -47,8 +48,9 @@ struct Model {
     simulate: bool,
     wheel: Option<Wheel>,
     pings: Vec<PlacedPing>,
-    overlays: Vec<(DisplayId, Bounds<Pixels>, WindowHandle<Overlay>)>,
+    overlays: Vec<(DisplayId, Bounds<Pixels>, f32, WindowHandle<Overlay>)>,
     settings_window: Option<WindowHandle<SettingsView>>,
+    tray_available: bool,
 }
 
 impl Model {
@@ -108,14 +110,14 @@ impl Model {
         self.enabled = !self.enabled;
         self.wheel = None;
         self.configure();
-        macos::set_enabled(self.enabled);
+        platform::set_enabled(self.enabled);
         cx.notify();
     }
 
     fn sound(&mut self, sound: &str) {
         if !self.settings.muted
             && self.settings.volume > 0
-            && !macos::play(
+            && !platform::play(
                 &self.assets.join(format!("sounds/{sound}.wav")),
                 self.settings.volume,
             )
@@ -144,15 +146,15 @@ impl Model {
     fn display_at(&self, p: Point<Pixels>) -> Option<DisplayId> {
         self.overlays
             .iter()
-            .find(|(_, b, _)| b.contains(&p))
-            .map(|(id, _, _)| *id)
+            .find(|(_, b, _, _)| b.contains(&p))
+            .map(|(id, _, _, _)| *id)
     }
 
     fn preview(&mut self, ping: usize, cx: &mut Context<Self>) {
         if let Some(display) = cx.primary_display() {
             self.spawn_ping(
                 ping,
-                macos::display_bounds(display.id()).center(),
+                platform::display_bounds(display.id()).center(),
                 display.id(),
             );
             cx.notify();
@@ -175,13 +177,14 @@ impl Model {
                     origin,
                     display,
                     hot: None,
+                    scale: platform::display_scale(display),
                 });
             }
             Event::WheelMove { x, y } => {
                 if let Some(wheel) = &mut self.wheel {
                     let hot = pick_slice(
-                        x as f32 - f32::from(wheel.origin.x),
-                        y as f32 - f32::from(wheel.origin.y),
+                        (x as f32 - f32::from(wheel.origin.x)) / wheel.scale,
+                        (y as f32 - f32::from(wheel.origin.y)) / wheel.scale,
                     );
                     let tick = hot.is_some() && wheel.hot != hot && self.settings.tick_sound;
                     wheel.hot = hot;
@@ -193,8 +196,8 @@ impl Model {
             Event::WheelRelease { x, y } => {
                 if let Some(wheel) = self.wheel.take()
                     && let Some(slot) = pick_slice(
-                        x as f32 - f32::from(wheel.origin.x),
-                        y as f32 - f32::from(wheel.origin.y),
+                        (x as f32 - f32::from(wheel.origin.x)) / wheel.scale,
+                        (y as f32 - f32::from(wheel.origin.y)) / wheel.scale,
                     )
                 {
                     let ping = index(&self.settings.wheel[slot]).unwrap_or(8);
@@ -215,7 +218,7 @@ impl Model {
             Event::Toggled { enabled } => {
                 self.enabled = enabled;
                 self.wheel = None;
-                macos::set_enabled(enabled);
+                platform::set_enabled(enabled);
             }
             Event::Error { message, code } => {
                 self.wheel = None;
@@ -254,9 +257,11 @@ fn sync_displays(model: &Entity<Model>, cx: &mut App) {
     let current = &model.read(cx).overlays;
     if displays.len() == current.len()
         && displays.iter().all(|d| {
-            current
-                .iter()
-                .any(|(id, b, _)| *id == d.id() && *b == macos::display_bounds(d.id()))
+            current.iter().any(|(id, b, scale, _)| {
+                *id == d.id()
+                    && *b == platform::display_bounds(d.id())
+                    && *scale == platform::display_scale(d.id())
+            })
         })
     {
         return;
@@ -266,20 +271,22 @@ fn sync_displays(model: &Entity<Model>, cx: &mut App) {
         m.pings.clear();
         std::mem::take(&mut m.overlays)
     });
-    for (_, _, window) in previous {
+    for (_, _, _, window) in previous {
         let _ = window.update(cx, |_, window, _| window.remove_window());
     }
     for display in displays {
         let id = display.id();
-        let bounds = macos::display_bounds(id);
+        let bounds = platform::display_bounds(id);
+        let scale = platform::display_scale(id);
+        let logical_bounds = Bounds::new(bounds.origin / scale, bounds.size / scale);
         let view_model = model.clone();
         match cx.open_window(
             WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_bounds: Some(WindowBounds::Windowed(logical_bounds)),
                 display_id: Some(id),
                 titlebar: None,
                 focus: false,
-                show: true,
+                show: false,
                 kind: WindowKind::PopUp,
                 is_resizable: false,
                 is_movable: false,
@@ -288,7 +295,7 @@ fn sync_displays(model: &Entity<Model>, cx: &mut App) {
                 ..Default::default()
             },
             |window, cx| {
-                macos::configure_overlay(window, bounds);
+                platform::configure_overlay(window, bounds);
                 cx.new(|cx| {
                     cx.observe(&view_model, |_, _, cx| cx.notify()).detach();
                     Overlay {
@@ -296,11 +303,12 @@ fn sync_displays(model: &Entity<Model>, cx: &mut App) {
                         model: view_model,
                         display: id,
                         bounds,
+                        scale,
                     }
                 })
             },
         ) {
-            Ok(window) => model.update(cx, |m, _| m.overlays.push((id, bounds, window))),
+            Ok(window) => model.update(cx, |m, _| m.overlays.push((id, bounds, scale, window))),
             Err(error) => model.update(cx, |m, _| m.notice = format!("无法创建信号层：{error}")),
         }
     }
@@ -311,6 +319,7 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
     if let Some(handle) = model.read(cx).settings_window
         && handle
             .update(cx, |_, window, cx| {
+                platform::show(window);
                 window.activate_window();
                 cx.activate(true);
             })
@@ -320,6 +329,7 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
     }
     let bounds = Bounds::centered(None, size(px(1080.), px(680.)), cx);
     let view_model = model.clone();
+    let tray_available = model.read(cx).tray_available;
     match cx.open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -331,9 +341,13 @@ fn show_settings(model: &Entity<Model>, cx: &mut App) {
             ..Default::default()
         },
         |window, cx| {
-            macos::configure_settings(window);
-            window.on_window_should_close(cx, |window, _| {
-                macos::hide(window);
+            platform::configure_settings(window);
+            window.on_window_should_close(cx, move |window, cx| {
+                if !tray_available {
+                    cx.quit();
+                    return true;
+                }
+                platform::hide(window);
                 false
             });
             cx.new(|cx| {
@@ -353,6 +367,7 @@ struct Overlay {
     model: Entity<Model>,
     display: DisplayId,
     bounds: Bounds<Pixels>,
+    scale: f32,
 }
 
 impl Render for Overlay {
@@ -362,7 +377,7 @@ impl Render for Overlay {
         if let Some(wheel) = &model.wheel
             && wheel.display == self.display
         {
-            let center = wheel.origin - self.bounds.origin;
+            let center = (wheel.origin - self.bounds.origin) / self.scale;
             let hot = wheel.hot;
             let highlights = self.highlight.frame(hot, window);
             let label = hot
@@ -394,7 +409,7 @@ impl Render for Overlay {
                 continue;
             }
             animating = true;
-            let center = ping.origin - self.bounds.origin;
+            let center = (ping.origin - self.bounds.origin) / self.scale;
             let progress = elapsed / ping.duration;
             let opacity = ((1. - progress) / 0.18).min(1.);
             let def = &PINGS[ping.ping];
@@ -447,7 +462,10 @@ impl Render for Overlay {
 pub fn run() -> Result<()> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let executable = std::env::current_exe()?;
+    #[cfg(target_os = "macos")]
     let bundle = executable.parent().unwrap().join("../Resources");
+    #[cfg(target_os = "windows")]
+    let bundle = executable.parent().unwrap().to_path_buf();
     let bundled = bundle.join("assets").is_dir();
     let assets = if bundled {
         bundle.join("assets")
@@ -455,15 +473,18 @@ pub fn run() -> Result<()> {
         root.join("assets")
     };
     let helper_path = if bundled {
-        executable.parent().unwrap().join("hook-helper")
+        executable.parent().unwrap().join(HELPER_NAME)
     } else {
-        root.join("native/hook-helper/build/hook-helper")
+        root.join("native/hook-helper/build").join(HELPER_NAME)
     };
     for asset in asset_files() {
         anyhow::ensure!(assets.join(&asset).is_file(), "缺少素材：{asset}");
     }
-    let home = std::env::var_os("HOME").context("HOME 未设置")?;
-    let data = PathBuf::from(home).join("Library/Application Support");
+    #[cfg(target_os = "macos")]
+    let data = PathBuf::from(std::env::var_os("HOME").context("HOME 未设置")?)
+        .join("Library/Application Support");
+    #[cfg(target_os = "windows")]
+    let data = PathBuf::from(std::env::var_os("APPDATA").context("APPDATA 未设置")?);
     let smoke = std::env::args().any(|a| a == "--smoke-test");
     let simulate = smoke || std::env::args().any(|a| a == "--preview");
     let settings_path = if simulate {
@@ -490,7 +511,7 @@ pub fn run() -> Result<()> {
         .write(true)
         .open(settings_path.with_extension("lock"))?;
     fs2::FileExt::try_lock_exclusive(&lock)
-        .context("lolPing Native 已经在运行，请从菜单栏打开设置")?;
+        .context("lolPing Native 已经在运行，请从菜单栏或系统托盘打开设置")?;
     let enabled = settings.enabled_on_start;
     let app = Application::new();
     app.on_reopen(|cx| cx.dispatch_action(&OpenSettings));
@@ -498,6 +519,7 @@ pub fn run() -> Result<()> {
         let model = cx.new(|cx| {
             cx.on_app_quit(|model: &mut Model, _| {
                 model.helper = None;
+                platform::shutdown();
                 async {}
             })
             .detach();
@@ -516,13 +538,18 @@ pub fn run() -> Result<()> {
                 pings: vec![],
                 overlays: vec![],
                 settings_window: None,
+                tray_available: true,
             }
         });
-        macos::init_status();
-        macos::set_enabled(enabled);
+        let tray_available = platform::init_status();
+        if !tray_available {
+            model.update(cx, |m, _| m.notice = "系统托盘不可用，关闭设置窗口将退出应用。".into());
+        }
+        model.update(cx, |m, _| m.tray_available = tray_available);
+        platform::set_enabled(enabled);
         cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
-            KeyBinding::new("cmd-,", OpenSettings, None),
+            KeyBinding::new(platform::QUIT_KEY, Quit, None),
+            KeyBinding::new(platform::SETTINGS_KEY, OpenSettings, None),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         let settings_model = model.clone();
@@ -553,7 +580,7 @@ pub fn run() -> Result<()> {
                 Timer::after(Duration::from_millis(200)).await;
                 if cx
                     .update(|cx| {
-                        match macos::poll_action() {
+                        match platform::poll_action() {
                             1 => ticker.update(cx, |m, cx| m.show_settings(cx)),
                             2 => ticker.update(cx, |m, cx| m.toggle(cx)),
                             3 => cx.quit(),
@@ -576,7 +603,7 @@ pub fn run() -> Result<()> {
                 Timer::after(Duration::from_secs(1)).await;
                 let _ = model.update(cx, |m, cx| {
                     if let Some(d) = cx.primary_display() {
-                        let c = macos::display_bounds(d.id()).center();
+                        let c = platform::display_bounds(d.id()).center();
                         let x = f32::from(c.x) as i32;
                         let y = f32::from(c.y) as i32;
                         if let Some(helper) = &mut m.helper {
@@ -614,10 +641,10 @@ pub fn run() -> Result<()> {
                         assert_eq!(Settings::load(&m.settings_path, &m.settings_path).unwrap().volume, 35);
                     });
                     let _ = cx.update(|cx| {
-                        let overlays: Vec<_> = model.read(cx).overlays.iter().map(|(_, _, w)| *w).collect();
+                        let overlays: Vec<_> = model.read(cx).overlays.iter().map(|(_, _, _, w)| *w).collect();
                         for overlay in overlays {
-                            overlay.update(cx, |_, window, _| assert!(macos::overlay_valid(window),
-                                "overlay must be transparent, click-through, nonactivating and on all Spaces")).unwrap();
+                            overlay.update(cx, |_, window, _| assert!(platform::overlay_valid(window),
+                                "overlay must be transparent, click-through, nonactivating and topmost")).unwrap();
                         }
                     });
                     let settings = cx.update(|cx| model.read(cx).settings_window.unwrap()).unwrap();

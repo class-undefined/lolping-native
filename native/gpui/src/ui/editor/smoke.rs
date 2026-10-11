@@ -1,28 +1,42 @@
 use super::*;
 
 async fn send(handle: WindowHandle<SettingsView>, event: PlatformInput, cx: &mut AsyncApp) {
-    let (kind, position) = match event {
-        PlatformInput::MouseMove(event) => (
-            if event.pressed_button.is_some() { 2 } else { 0 },
-            event.position,
-        ),
-        PlatformInput::MouseDown(event) => (1, event.position),
-        PlatformInput::MouseUp(event) => (3, event.position),
-        PlatformInput::KeyDown(event) => (
-            if event.keystroke.key == "escape" {
-                4
-            } else {
-                5
-            },
-            Point::default(),
-        ),
-        _ => unreachable!("unsupported smoke input"),
-    };
+    #[cfg(target_os = "windows")]
     AnyWindowHandle::from(handle)
-        .update(cx, |_, window, _| {
-            macos::simulate_settings_input(window, kind, position.x.into(), position.y.into());
+        .update(cx, |_, window, cx| {
+            window.dispatch_event(event, cx);
         })
         .unwrap();
+    #[cfg(target_os = "macos")]
+    {
+        let (kind, position) = match event {
+            PlatformInput::MouseMove(event) => (
+                if event.pressed_button.is_some() { 2 } else { 0 },
+                event.position,
+            ),
+            PlatformInput::MouseDown(event) => (1, event.position),
+            PlatformInput::MouseUp(event) => (3, event.position),
+            PlatformInput::KeyDown(event) => (
+                if event.keystroke.key == "escape" {
+                    4
+                } else {
+                    5
+                },
+                Point::default(),
+            ),
+            _ => unreachable!("unsupported smoke input"),
+        };
+        AnyWindowHandle::from(handle)
+            .update(cx, |_, window, _| {
+                platform::simulate_settings_input(
+                    window,
+                    kind,
+                    position.x.into(),
+                    position.y.into(),
+                );
+            })
+            .unwrap();
+    }
     Timer::after(Duration::from_millis(45)).await;
 }
 
@@ -163,7 +177,7 @@ pub(in crate::ui) async fn run(handle: WindowHandle<SettingsView>, cx: &mut Asyn
     send(
         handle,
         PlatformInput::KeyDown(KeyDownEvent {
-            keystroke: Keystroke::parse("cmd-z").unwrap(),
+            keystroke: Keystroke::parse(platform::UNDO_KEY).unwrap(),
             is_held: false,
         }),
         cx,

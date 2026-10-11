@@ -1,0 +1,112 @@
+name: Native builds
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  macos:
+    name: macOS ARM64 · DMG
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.94.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-arm64
+      - name: Build and test input helper
+        run: |
+          sh native/hook-helper/build.sh
+          native/hook-helper/build/helper_tests
+      - run: cargo fmt --all --check
+      - run: cargo test --locked -p lolping-native
+      - run: cargo clippy --locked -p lolping-native --all-targets -- -D warnings
+      - name: Build app and DMG
+        run: sh native/gpui/dmg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lolPing-native-macos-arm64
+          path: |
+            release/native/*.dmg
+            release/native/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows x64 · EXE
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Locate Windows shader compiler
+        shell: pwsh
+        run: |
+          $fxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\fxc.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $fxc) { throw 'Windows SDK fxc.exe not found' }
+          "GPUI_FXC_PATH=$($fxc.FullName)" >> $env:GITHUB_ENV
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup default 1.94.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-x64
+      - name: Build and test input helper
+        run: |
+          ./native/hook-helper/build.ps1
+          ./native/hook-helper/build/helper_tests.exe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: cargo fmt --all --check
+      - run: cargo test --locked -p lolping-native
+      - run: cargo clippy --locked -p lolping-native --all-targets -- -D warnings
+      - name: Build installer and portable ZIP
+        run: python native/gpui/bundle_windows.py
+      - name: Verify installer payload
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem release/native/*-setup.exe | Select-Object -First 1
+          $destination = Join-Path $env:RUNNER_TEMP 'lolPing 安装测试'
+          $process = Start-Process $installer.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$destination`"" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
+          if (-not (Test-Path "$destination/hook-helper.exe")) { throw 'Missing input helper' }
+          $assets = & "$destination/lolping-native.exe" --list-assets
+          if ($LASTEXITCODE -ne 0 -or -not $assets) { throw 'Installed executable failed' }
+          foreach ($asset in $assets) {
+            if (-not (Test-Path "$destination/assets/$asset")) { throw "Missing asset: $asset" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lolPing-native-windows-x64
+          path: |
+            release/native/*-setup.exe
+            release/native/*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14
