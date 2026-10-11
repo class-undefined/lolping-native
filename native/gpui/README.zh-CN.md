@@ -22,7 +22,19 @@ python3 native/gpui/bundle.py
 open "release/native/lolPing Native.app"
 ```
 
-脚本生成独立的 `.app` 和 ZIP，并执行临时签名校验。产物位于 `release/native/`。这个版本尚未经过 Apple 公证，临时签名更新后可能需要重新授予辅助功能权限。
+脚本生成独立的 `.app` 和 ZIP，并执行临时签名校验。
+
+生成 DMG 安装包：
+
+```bash
+sh native/gpui/dmg.sh
+```
+
+默认先构建应用，再生成压缩 DMG。已有应用包时，可用 `sh native/gpui/dmg.sh --skip-build` 跳过构建。脚本可从任意目录运行，需要 macOS 自带的 `hdiutil`、`ditto` 和 Xcode 命令行工具。
+
+产物位于 `release/native/lolPing-Native-<版本>-<架构>.dmg`。打开 DMG 后，将 `lolPing Native.app` 拖到 `Applications` 即可安装。脚本校验镜像成功后才替换已有 DMG。
+
+所有打包产物位于 `release/native/`。这个版本尚未经过 Apple 公证，临时签名更新后可能需要重新授予辅助功能权限。
 
 ## 已实现的功能
 
