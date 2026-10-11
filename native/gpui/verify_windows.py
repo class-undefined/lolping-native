@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import uuid
 import wave
 import zipfile
 
@@ -41,6 +42,11 @@ def desktop_accepts_tray_icons():
     user.DestroyWindow.argtypes = (w.HWND,)
     user.LoadIconW.argtypes = (w.HINSTANCE, ctypes.c_void_p)
     user.LoadIconW.restype = w.HICON
+    user.CopyIcon.argtypes = (w.HICON,)
+    user.CopyIcon.restype = w.HICON
+    user.DestroyIcon.argtypes = (w.HICON,)
+    user.SetWindowPos.argtypes = (w.HWND, w.HWND, ctypes.c_int, ctypes.c_int,
+                                 ctypes.c_int, ctypes.c_int, w.UINT)
     shell.Shell_NotifyIconW.argtypes = (w.DWORD, ctypes.POINTER(NotifyIconData))
     shell.Shell_NotifyIconW.restype = w.BOOL
     initialized = ole.OleInitialize(None) >= 0
@@ -51,16 +57,36 @@ def desktop_accepts_tray_icons():
     data.hWnd, data.uID, data.uFlags = hwnd, 1, 7
     data.uCallbackMessage = 0x8020
     data.hIcon = user.LoadIconW(None, 32512)
+    shared_icon = data.hIcon
+    owned_icon = user.CopyIcon(shared_icon)
     data.szTip = "lolPing CI shell probe"
-    added = bool(shell.Shell_NotifyIconW(0, ctypes.byref(data))) if hwnd else False
-    print(f"Independent shell tray probe: added={added}, last_error={ctypes.get_last_error()}", flush=True)
-    if added:
-        shell.Shell_NotifyIconW(2, ctypes.byref(data))
+    print(f"Shell probe resources: hwnd={hwnd}, icon={shared_icon}, size={data.cbSize}", flush=True)
+    accepted = False
+    for label, flags, icon, visible in [
+        ("shared-icon", 7, shared_icon, False),
+        ("owned-icon", 7, owned_icon, False),
+        ("message-only", 1, None, False),
+        ("icon-only", 2, owned_icon, False),
+        ("visible-owner", 7, owned_icon, True),
+        ("guid-v4", 7 | 0x20, owned_icon, True),
+    ]:
+        if visible:
+            user.SetWindowPos(hwnd, None, 0, 0, 32, 32, 0x10 | 0x40)
+        data.uFlags, data.hIcon = flags, icon
+        data.uVersion = 4
+        data.guidItem[:] = uuid.uuid4().bytes_le
+        added = bool(shell.Shell_NotifyIconW(0, ctypes.byref(data))) if hwnd else False
+        print(f"Independent shell tray probe {label}: added={added}, last_error={ctypes.get_last_error()}", flush=True)
+        if added:
+            accepted = True
+            shell.Shell_NotifyIconW(2, ctypes.byref(data))
     if hwnd:
         user.DestroyWindow(hwnd)
     if initialized:
         ole.OleUninitialize()
-    return added
+    if owned_icon:
+        user.DestroyIcon(owned_icon)
+    return accepted
 
 
 def ensure_desktop_shell():
