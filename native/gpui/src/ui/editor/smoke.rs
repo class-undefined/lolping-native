@@ -1,42 +1,28 @@
 use super::*;
 
 async fn send(handle: WindowHandle<SettingsView>, event: PlatformInput, cx: &mut AsyncApp) {
-    #[cfg(target_os = "windows")]
+    let (kind, position) = match event {
+        PlatformInput::MouseMove(event) => (
+            if event.pressed_button.is_some() { 2 } else { 0 },
+            event.position,
+        ),
+        PlatformInput::MouseDown(event) => (1, event.position),
+        PlatformInput::MouseUp(event) => (3, event.position),
+        PlatformInput::KeyDown(event) => (
+            if event.keystroke.key == "escape" {
+                4
+            } else {
+                5
+            },
+            Point::default(),
+        ),
+        _ => unreachable!("unsupported smoke input"),
+    };
     AnyWindowHandle::from(handle)
-        .update(cx, |_, window, cx| {
-            window.dispatch_event(event, cx);
+        .update(cx, |_, window, _| {
+            platform::simulate_settings_input(window, kind, position.x.into(), position.y.into());
         })
         .unwrap();
-    #[cfg(target_os = "macos")]
-    {
-        let (kind, position) = match event {
-            PlatformInput::MouseMove(event) => (
-                if event.pressed_button.is_some() { 2 } else { 0 },
-                event.position,
-            ),
-            PlatformInput::MouseDown(event) => (1, event.position),
-            PlatformInput::MouseUp(event) => (3, event.position),
-            PlatformInput::KeyDown(event) => (
-                if event.keystroke.key == "escape" {
-                    4
-                } else {
-                    5
-                },
-                Point::default(),
-            ),
-            _ => unreachable!("unsupported smoke input"),
-        };
-        AnyWindowHandle::from(handle)
-            .update(cx, |_, window, _| {
-                platform::simulate_settings_input(
-                    window,
-                    kind,
-                    position.x.into(),
-                    position.y.into(),
-                );
-            })
-            .unwrap();
-    }
     Timer::after(Duration::from_millis(45)).await;
 }
 

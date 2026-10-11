@@ -22,6 +22,7 @@
 namespace {
 constexpr UINT kTrayMessage = WM_APP + 30;
 constexpr UINT kConfigureOverlay = WM_APP + 31;
+constexpr UINT kSimulateInput = WM_APP + 32;
 HWND trayWindow = nullptr;
 UINT taskbarCreated = 0;
 bool enabled = true;
@@ -95,6 +96,31 @@ LRESULT CALLBACK overlayProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lpar
     return DefSubclassProc(hwnd, message, wparam, lparam);
 }
 
+LRESULT CALLBACK settingsProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                              UINT_PTR id, DWORD_PTR) {
+    if (message == kSimulateInput) {
+        // Exercise only our own preview window; never inject system-wide input.
+        if (wparam <= 3) {
+            const UINT messages[] = {WM_MOUSEMOVE, WM_LBUTTONDOWN, WM_MOUSEMOVE, WM_LBUTTONUP};
+            SendMessageW(hwnd, messages[wparam], wparam == 1 || wparam == 2 ? MK_LBUTTON : 0, lparam);
+        } else if (wparam == 4 || wparam == 5) {
+            BYTE previous[256]{};
+            GetKeyboardState(previous);
+            BYTE state[256]{};
+            if (wparam == 5) state[VK_CONTROL] = state[VK_LCONTROL] = 0x80;
+            SetKeyboardState(state);
+            const UINT key = wparam == 4 ? VK_ESCAPE : 'Z';
+            const LPARAM scan = 1 | (static_cast<LPARAM>(MapVirtualKeyW(key, MAPVK_VK_TO_VSC)) << 16);
+            SendMessageW(hwnd, WM_KEYDOWN, key, scan);
+            SendMessageW(hwnd, WM_KEYUP, key, scan | (static_cast<LPARAM>(3) << 30));
+            SetKeyboardState(previous);
+        }
+        return 0;
+    }
+    if (message == WM_NCDESTROY) RemoveWindowSubclass(hwnd, settingsProc, id);
+    return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+
 BOOL CALLBACK collectMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM data) {
     reinterpret_cast<std::vector<HMONITOR>*>(data)->push_back(monitor);
     return TRUE;
@@ -164,6 +190,14 @@ void lp_status_enabled(bool value) {
 void lp_configure_settings(void* handle) {
     const BOOL dark = TRUE;
     DwmSetWindowAttribute(static_cast<HWND>(handle), 20 /* immersive dark mode */, &dark, sizeof(dark));
+    SetWindowSubclass(static_cast<HWND>(handle), settingsProc, 1, 0);
+}
+
+void lp_simulate_settings_input(void* handle, int kind, double x, double y) {
+    const auto hwnd = static_cast<HWND>(handle);
+    const double scale = GetDpiForWindow(hwnd) / 96.0;
+    PostMessageW(hwnd, kSimulateInput, kind,
+        MAKELPARAM(static_cast<short>(x * scale), static_cast<short>(y * scale)));
 }
 
 void lp_configure_overlay(void* handle, double x, double y, double width, double height) {

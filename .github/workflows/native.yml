@@ -28,6 +28,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: macos-arm64
+          cache-on-failure: true
       - name: Build and test input helper
         run: |
           sh native/hook-helper/build.sh
@@ -75,6 +76,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-x64
+          cache-on-failure: true
       - name: Build and test input helper
         run: |
           ./native/hook-helper/build.ps1

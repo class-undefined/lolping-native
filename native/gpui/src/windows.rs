@@ -9,6 +9,7 @@ pub const UNDO_KEY: &str = "ctrl-z";
 
 unsafe extern "C" {
     fn lp_configure_settings(hwnd: *mut c_void);
+    fn lp_simulate_settings_input(hwnd: *mut c_void, kind: i32, x: f64, y: f64);
     fn lp_configure_overlay(hwnd: *mut c_void, x: f64, y: f64, w: f64, h: f64);
     fn lp_play_sound(path: *const u16, volume: f32) -> bool;
     fn lp_init_status() -> bool;
@@ -33,6 +34,10 @@ fn handle(window: &Window) -> *mut c_void {
 
 pub fn configure_settings(window: &Window) {
     unsafe { lp_configure_settings(handle(window)) }
+}
+
+pub fn simulate_settings_input(window: &Window, kind: i32, x: f32, y: f32) {
+    unsafe { lp_simulate_settings_input(handle(window), kind, x as f64, y as f64) }
 }
 
 pub fn configure_overlay(window: &Window, bounds: Bounds<Pixels>) {
