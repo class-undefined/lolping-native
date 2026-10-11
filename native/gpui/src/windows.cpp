@@ -45,9 +45,14 @@ NOTIFYICONDATAW trayData() {
 void addTray() {
     auto data = trayData();
     SetLastError(0);
-    trayInstalled = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    // Windows can broadcast TaskbarCreated on DPI changes while the icon still
+    // exists. NIM_ADD then fails even though the tray entry is healthy. Registration
+    // must be idempotent, including when Shell_NotifyIcon pumps a nested message.
+    trayInstalled = Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE ||
+        Shell_NotifyIconW(NIM_ADD, &data) != FALSE ||
+        Shell_NotifyIconW(NIM_MODIFY, &data) != FALSE;
     if (!trayInstalled) {
-        std::fprintf(stderr, "Tray NIM_ADD failed: error=%lu size=%lu hwnd=%p icon=%p shell=%p\n",
+        std::fprintf(stderr, "Tray registration failed: error=%lu size=%lu hwnd=%p icon=%p shell=%p\n",
             GetLastError(), data.cbSize, static_cast<void*>(data.hWnd),
             static_cast<void*>(data.hIcon), static_cast<void*>(FindWindowW(L"Shell_TrayWnd", nullptr)));
     }
@@ -154,6 +159,11 @@ void reapSounds() {
 } // namespace
 
 extern "C" {
+bool lp_refresh_status() {
+    addTray();
+    return trayInstalled;
+}
+
 void lp_report_error(const wchar_t* message) {
     MessageBoxW(nullptr, message, L"lolPing Native", MB_OK | MB_ICONERROR);
 }

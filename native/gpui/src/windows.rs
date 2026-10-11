@@ -13,6 +13,7 @@ unsafe extern "C" {
     fn lp_configure_overlay(hwnd: *mut c_void, x: f64, y: f64, w: f64, h: f64);
     fn lp_play_sound(path: *const u16, volume: f32) -> bool;
     fn lp_init_status() -> bool;
+    fn lp_refresh_status() -> bool;
     fn lp_shutdown();
     fn lp_status_enabled(enabled: bool);
     fn lp_poll_action() -> i32;
@@ -80,6 +81,10 @@ pub fn play(path: &Path, volume: u32) -> bool {
 
 pub fn init_status() -> bool {
     unsafe { lp_init_status() }
+}
+
+pub fn refresh_status() -> bool {
+    unsafe { lp_refresh_status() }
 }
 
 pub fn shutdown() {

@@ -657,6 +657,10 @@ pub fn run() -> Result<()> {
                     let _ = cx.update(|cx| {
                         assert!(!model.read(cx).overlays.is_empty(), "at least one overlay must open");
                         assert!(model.read(cx).tray_available, "system tray must initialize");
+                        #[cfg(target_os = "windows")]
+                        for _ in 0..2 {
+                            assert!(platform::refresh_status(), "repeated tray registration must preserve the icon");
+                        }
                         let overlays: Vec<_> = model.read(cx).overlays.iter().map(|(_, _, _, w)| *w).collect();
                         for overlay in overlays {
                             overlay.update(cx, |_, window, _| assert!(platform::overlay_valid(window),
