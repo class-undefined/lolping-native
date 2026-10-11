@@ -368,7 +368,6 @@ impl Render for Overlay {
             let label = hot
                 .map(|slot| PINGS[index(&model.settings.wheel[slot]).unwrap_or(8)].name)
                 .unwrap_or("选择信号");
-            let sublabel = hot.map(|slot| wheel::DIRECTIONS[slot]).unwrap_or("lolPing");
             root = root.child(
                 wheel::surface(
                     &model.assets,
@@ -377,7 +376,6 @@ impl Render for Overlay {
                     None,
                     1.,
                     label,
-                    sublabel,
                 )
                 .absolute()
                 .left(center.x - px(wheel::SURFACE_SIZE / 2.))

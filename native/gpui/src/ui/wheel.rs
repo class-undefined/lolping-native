@@ -3,40 +3,33 @@ use lolping_native::{WHEEL_INNER_RADIUS, WHEEL_OUTER_RADIUS};
 use std::path::Path as FilePath;
 
 pub(super) const SURFACE_SIZE: f32 = 408.;
-pub(super) const DIRECTIONS: [&str; 8] = ["上", "右上", "右", "右下", "下", "左下", "左", "左上"];
 const CENTER: f32 = SURFACE_SIZE / 2.;
 
 pub(super) fn polar(center: Point<Pixels>, radius: f32, angle: f32) -> Point<Pixels> {
     center + point(px(radius * angle.cos()), px(radius * angle.sin()))
 }
 
-fn sector(center: Point<Pixels>, slot: usize, inner: f32, outer: f32) -> Path<Pixels> {
-    let start = (-112.5 + slot as f32 * 45.).to_radians() + 0.009;
-    let end = start + 45_f32.to_radians() - 0.018;
+fn sector(center: Point<Pixels>, slot: usize) -> Path<Pixels> {
+    let start = (-112.5 + slot as f32 * 45.).to_radians();
+    let end = start + 45_f32.to_radians();
     let mut path = PathBuilder::fill();
-    path.move_to(polar(center, inner, start));
-    for i in 0..=24 {
-        path.line_to(polar(center, outer, start + (end - start) * i as f32 / 24.));
+    path.move_to(polar(center, WHEEL_INNER_RADIUS, start));
+    for i in 0..=16 {
+        path.line_to(polar(
+            center,
+            WHEEL_OUTER_RADIUS,
+            start + (end - start) * i as f32 / 16.,
+        ));
     }
-    for i in (0..=24).rev() {
-        path.line_to(polar(center, inner, start + (end - start) * i as f32 / 24.));
+    for i in (0..=16).rev() {
+        path.line_to(polar(
+            center,
+            WHEEL_INNER_RADIUS,
+            start + (end - start) * i as f32 / 16.,
+        ));
     }
     path.close();
     path.build().expect("valid wheel sector")
-}
-
-fn disc(window: &mut Window, center: Point<Pixels>, radius: f32, fill: u32, edge: u32) {
-    window.paint_quad(quad(
-        Bounds::new(
-            center - point(px(radius), px(radius)),
-            size(px(radius * 2.), px(radius * 2.)),
-        ),
-        px(radius),
-        rgb(fill),
-        px(1.),
-        rgb(edge),
-        BorderStyle::Solid,
-    ));
 }
 
 /// Shared by the desktop overlay and the editor so slot angles, art and radii stay identical.
@@ -47,7 +40,6 @@ pub(super) fn surface(
     previous: Option<&[String; 8]>,
     progress: f32,
     label: &str,
-    sublabel: &str,
 ) -> Div {
     let mut root = div()
         .relative()
@@ -58,49 +50,25 @@ pub(super) fn surface(
                 |_, _, _| (),
                 move |bounds, (), window, _| {
                     let center = bounds.center();
-                    disc(
-                        window,
-                        center + point(px(0.), px(4.)),
-                        196.,
-                        0x080d13,
-                        0x080d13,
-                    );
-                    disc(window, center, 196., 0x121a24, 0x3a4655);
-                    disc(window, center, 191., 0x090f16, 0x090f16);
                     for (slot, strength) in highlights.into_iter().enumerate() {
-                        window.paint_path(
-                            sector(center, slot, WHEEL_INNER_RADIUS, WHEEL_OUTER_RADIUS),
-                            rgb(0x26313e),
-                        );
-                        window.paint_path(
-                            sector(
-                                center,
-                                slot,
-                                WHEEL_INNER_RADIUS + 2.,
-                                WHEEL_OUTER_RADIUS - 2.,
-                            ),
-                            rgb(0x1c2632),
-                        );
-                        window.paint_path(
-                            sector(
-                                center,
-                                slot,
-                                WHEEL_INNER_RADIUS + 2.,
-                                WHEEL_OUTER_RADIUS - 2.,
-                            ),
-                            Hsla::from(rgb(0x69c5f0)).opacity(strength * 0.14),
-                        );
-                        window.paint_path(
-                            sector(center, slot, WHEEL_OUTER_RADIUS - 3., WHEEL_OUTER_RADIUS),
-                            Hsla::from(rgb(0x6bc9f3)).opacity(0.12 + strength * 0.88),
-                        );
-                        window.paint_path(
-                            sector(center, slot, WHEEL_INNER_RADIUS, WHEEL_INNER_RADIUS + 1.),
-                            Hsla::from(rgb(0x7196ae)).opacity(0.35),
-                        );
+                        // Keep the original translucent gray/gold appearance at both endpoints.
+                        let base = rgba(0x242b32ed);
+                        let active = rgba(0x88826cdf);
+                        let color = Rgba {
+                            r: base.r + (active.r - base.r) * strength,
+                            g: base.g + (active.g - base.g) * strength,
+                            b: base.b + (active.b - base.b) * strength,
+                            a: base.a + (active.a - base.a) * strength,
+                        };
+                        window.paint_path(sector(center, slot), color);
+                        let mut border = PathBuilder::stroke(px(1.));
+                        let angle = (-112.5 + slot as f32 * 45.).to_radians();
+                        border.move_to(polar(center, WHEEL_INNER_RADIUS, angle));
+                        border.line_to(polar(center, WHEEL_OUTER_RADIUS, angle));
+                        if let Ok(path) = border.build() {
+                            window.paint_path(path, rgba(0xc8aa6e88));
+                        }
                     }
-                    disc(window, center, WHEEL_INNER_RADIUS - 4., 0x101923, 0x42556a);
-                    disc(window, center, WHEEL_INNER_RADIUS - 9., 0x131e29, 0x1f303f);
                 },
             )
             .absolute()
@@ -121,55 +89,35 @@ pub(super) fn surface(
         } else {
             1.
         };
-        let icon_size = (38. + strength * 5.) * (0.8 + entering * 0.2);
+        let icon_size = (48. + strength * 10.) * (0.8 + entering * 0.2);
         root = root.child(
-            div()
+            img(assets.join(format!("textures/{}.png", ping.icon)))
                 .absolute()
-                .left(pos.x - px(49.))
-                .top(pos.y - px(31.))
-                .w(px(98.))
-                .h(px(66.))
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(3.))
-                .opacity(entering)
-                .child(img(assets.join(format!("textures/{}.png", ping.icon))).size(px(icon_size)))
-                .child(
-                    div()
-                        .text_size(px(11.))
-                        .text_color(rgb(if strength > 0.4 { 0xf2f8fc } else { 0xa7b7c6 }))
-                        .child(ping.name),
-                ),
+                .left(pos.x - px(icon_size / 2.))
+                .top(pos.y - px(icon_size / 2.))
+                .size(px(icon_size))
+                .opacity(entering),
         );
     }
     root.child(
         div()
             .absolute()
-            .left(px(CENTER - 72.))
-            .top(px(CENTER - 58.))
-            .w(px(144.))
-            .h(px(116.))
+            .left(px(CENTER - WHEEL_INNER_RADIUS))
+            .top(px(CENTER - WHEEL_INNER_RADIUS))
+            .size(px(WHEEL_INNER_RADIUS * 2.))
+            .rounded_full()
+            .border_2()
+            .border_color(rgb(0xc8aa6e))
+            .bg(rgba(0x123033f5))
             .flex()
             .flex_col()
             .items_center()
             .justify_center()
-            .gap(px(8.))
-            .child(
-                div()
-                    .text_size(px(11.))
-                    .text_color(rgb(0x71c9ee))
-                    .child(sublabel.to_owned()),
-            )
-            .child(
-                div()
-                    .text_size(px(18.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(rgb(0xe5eef6))
-                    .child(label.to_owned()),
-            )
-            .child(div().w(px(24.)).h(px(2.)).bg(rgb(0x608aa4))),
+            .gap_3()
+            .text_size(px(16.))
+            .text_color(rgb(0xf0dfb9))
+            .child(img(assets.join("textures/generic_ping.png")).size(px(34.)))
+            .child(label.to_owned()),
     )
 }
 

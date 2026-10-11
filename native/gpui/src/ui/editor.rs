@@ -397,11 +397,6 @@ impl SettingsView {
             .selected
             .unwrap_or_else(|| index(&settings.wheel[slot]).unwrap_or(8));
         let label = PINGS[ping_index].name;
-        let sublabel = if self.selected.is_some() {
-            "待放置".to_owned()
-        } else {
-            format!("{:02} / {}", slot + 1, wheel::DIRECTIONS[slot])
-        };
         let progress = self
             .transition
             .as_ref()
@@ -433,7 +428,6 @@ impl SettingsView {
                 previous,
                 wheel::settle(progress),
                 label,
-                &sublabel,
             ))
             .on_mouse_move(cx.listener(|view, event: &MouseMoveEvent, _, cx| {
                 if event.pressed_button.is_none() {
