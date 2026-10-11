@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Install and exercise the shipped Windows application outside the source checkout."""
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -8,6 +9,7 @@ import pathlib
 import subprocess
 import sys
 import tempfile
+import time
 import wave
 import zipfile
 
@@ -16,6 +18,29 @@ from bundle_windows import ARCHITECTURES, RELEASE, verify_machine
 
 def run(*args, **kwargs):
     return subprocess.run(args, check=True, encoding="utf-8", errors="replace", **kwargs)
+
+
+def ensure_desktop_shell():
+    # The Windows ARM runner can log in without starting Explorer. Test the real
+    # notification area in a normal desktop session, rather than skipping tray checks.
+    find_window = ctypes.WinDLL("user32", use_last_error=True).FindWindowW
+    find_window.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
+    find_window.restype = ctypes.c_void_p
+    if find_window("Shell_TrayWnd", None):
+        print("Explorer taskbar is available")
+        return
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise RuntimeError("GUI verification needs a logged-in desktop with Explorer running")
+    print("Starting Explorer for the CI desktop session")
+    subprocess.Popen([str(pathlib.Path(os.environ["SYSTEMROOT"]) / "explorer.exe")],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(60):
+        if find_window("Shell_TrayWnd", None):
+            time.sleep(2)
+            print("Explorer taskbar initialized")
+            return
+        time.sleep(0.5)
+    raise RuntimeError("CI desktop has no Explorer taskbar after 30 seconds")
 
 
 def verify_app(app, machine, working, env):
@@ -52,6 +77,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--arch", required=True, choices=ARCHITECTURES)
     args = parser.parse_args()
+    ensure_desktop_shell()
     machine = ARCHITECTURES[args.arch][4]
     installers = list(RELEASE.glob(f"*-windows-{args.arch}-setup.exe"))
     archives = list(RELEASE.glob(f"*-windows-{args.arch}.zip"))
