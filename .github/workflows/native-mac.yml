@@ -1,0 +1,28 @@
+name: Native macOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        run: rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy && rustup default 1.94.1
+      - name: Build and test input helper
+        run: sh native/hook-helper/build.sh && native/hook-helper/build/helper_tests
+      - run: cargo fmt --all --check
+      - run: cargo test --locked -p lolping-native
+      - run: cargo clippy --locked -p lolping-native --all-targets -- -D warnings
+      - run: python3 native/gpui/bundle.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lolPing-native-mac-arm64
+          path: release/native/*.zip
+          retention-days: 14

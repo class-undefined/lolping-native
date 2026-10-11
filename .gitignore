@@ -1,0 +1,7 @@
+/target/
+/release/
+/native/hook-helper/build/
+.DS_Store
+*.log
+__pycache__/
+*.pyc
