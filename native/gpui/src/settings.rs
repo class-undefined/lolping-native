@@ -135,6 +135,18 @@ impl Settings {
         }
     }
 
+    /// Insert a wheel slot at a new position, preserving the order of the other signals.
+    pub fn move_slot(&mut self, from: usize, to: usize) {
+        if from >= self.wheel.len() || to >= self.wheel.len() || from == to {
+            return;
+        }
+        if from < to {
+            self.wheel[from..=to].rotate_left(1);
+        } else {
+            self.wheel[to..=from].rotate_right(1);
+        }
+    }
+
     pub fn helper_config(&self, enabled: bool) -> Value {
         json!({"type":"config", "trigger":self.trigger, "triggerVk":0,
             "clickPing":self.click_ping, "emoteTrigger":"off", "emoteTriggerVk":0,
@@ -168,5 +180,55 @@ mod tests {
         assert_eq!(s.wheel[3], "visioncleared");
         assert_eq!(Settings::from_value(serde_json::to_value(&s).unwrap()), s);
         assert_eq!(s.helper_config(true)["emoteTrigger"], "off");
+    }
+
+    #[test]
+    fn moving_slots_preserves_order_and_survives_reload() {
+        let mut s = Settings::default();
+        s.move_slot(0, 3);
+        assert_eq!(
+            s.wheel,
+            [
+                "push",
+                "omw",
+                "allin",
+                "danger",
+                "assist",
+                "needvision",
+                "missing",
+                "enemyvision"
+            ]
+        );
+        assert_eq!(Settings::from_value(serde_json::to_value(&s).unwrap()), s);
+        s.move_slot(3, 0);
+        assert_eq!(s.wheel, Settings::default().wheel);
+        s.move_slot(7, 0);
+        assert_eq!(s.wheel[0], "enemyvision");
+        assert_eq!(s.wheel[7], "missing");
+    }
+
+    #[test]
+    fn no_op_or_invalid_edits_leave_layout_unchanged() {
+        let mut s = Settings::default();
+        for (from, to) in [(2, 2), (8, 0), (0, 8), (usize::MAX, 1)] {
+            s.move_slot(from, to);
+        }
+        s.place(0, 0);
+        s.place(8, 0);
+        s.place(0, PINGS.len());
+        assert_eq!(s, Settings::default());
+    }
+
+    #[test]
+    fn replacements_and_reordering_keep_all_eight_slots_unique() {
+        for (ping, definition) in PINGS.iter().enumerate() {
+            for target in 0..8 {
+                let mut s = Settings::default();
+                s.place(target, ping);
+                assert_eq!(s.wheel[target], definition.id);
+                s.move_slot(target, (target + 3) % 8);
+                assert_eq!(Settings::from_value(serde_json::to_value(&s).unwrap()), s);
+            }
+        }
     }
 }
