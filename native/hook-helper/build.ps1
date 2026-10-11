@@ -6,7 +6,7 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Force build | Out-Null
-    $flags = @('/nologo', '/std:c++20', '/EHsc', '/utf-8', '/W4', '/MT', '/Fobuild\')
+    $flags = @('/nologo', '/std:c++20', '/Zc:preprocessor', '/EHsc', '/utf-8', '/W4', '/MT', '/Fobuild\')
     & cl.exe @flags /O2 src/main_win.cpp src/hooks_win.cpp src/simulate.cpp src/commands.cpp `
         src/output.cpp src/json.cpp src/decision.cpp /Febuild/hook-helper.exe /link user32.lib
     if ($LASTEXITCODE -ne 0) { throw 'Input helper build failed' }

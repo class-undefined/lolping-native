@@ -26,6 +26,15 @@ struct Wheel {
     hot: Option<usize>,
     scale: f32,
 }
+
+fn local_position(point: Point<Pixels>, origin: Point<Pixels>, scale: f32) -> Point<Pixels> {
+    (point - origin) / scale
+}
+
+fn slice_at(x: i32, y: i32, origin: Point<Pixels>, scale: f32) -> Option<usize> {
+    let offset = local_position(point(px(x as f32), px(y as f32)), origin, scale);
+    pick_slice(offset.x.into(), offset.y.into())
+}
 struct PlacedPing {
     origin: Point<Pixels>,
     display: DisplayId,
@@ -182,10 +191,7 @@ impl Model {
             }
             Event::WheelMove { x, y } => {
                 if let Some(wheel) = &mut self.wheel {
-                    let hot = pick_slice(
-                        (x as f32 - f32::from(wheel.origin.x)) / wheel.scale,
-                        (y as f32 - f32::from(wheel.origin.y)) / wheel.scale,
-                    );
+                    let hot = slice_at(x, y, wheel.origin, wheel.scale);
                     let tick = hot.is_some() && wheel.hot != hot && self.settings.tick_sound;
                     wheel.hot = hot;
                     if tick {
@@ -195,10 +201,7 @@ impl Model {
             }
             Event::WheelRelease { x, y } => {
                 if let Some(wheel) = self.wheel.take()
-                    && let Some(slot) = pick_slice(
-                        (x as f32 - f32::from(wheel.origin.x)) / wheel.scale,
-                        (y as f32 - f32::from(wheel.origin.y)) / wheel.scale,
-                    )
+                    && let Some(slot) = slice_at(x, y, wheel.origin, wheel.scale)
                 {
                     let ping = index(&self.settings.wheel[slot]).unwrap_or(8);
                     self.spawn_ping(ping, wheel.origin, wheel.display);
@@ -377,7 +380,7 @@ impl Render for Overlay {
         if let Some(wheel) = &model.wheel
             && wheel.display == self.display
         {
-            let center = (wheel.origin - self.bounds.origin) / self.scale;
+            let center = local_position(wheel.origin, self.bounds.origin, self.scale);
             let hot = wheel.hot;
             let highlights = self.highlight.frame(hot, window);
             let label = hot
@@ -409,7 +412,7 @@ impl Render for Overlay {
                 continue;
             }
             animating = true;
-            let center = (ping.origin - self.bounds.origin) / self.scale;
+            let center = local_position(ping.origin, self.bounds.origin, self.scale);
             let progress = elapsed / ping.duration;
             let opacity = ((1. - progress) / 0.18).min(1.);
             let def = &PINGS[ping.ping];
@@ -606,11 +609,12 @@ pub fn run() -> Result<()> {
                         let c = platform::display_bounds(d.id()).center();
                         let x = f32::from(c.x) as i32;
                         let y = f32::from(c.y) as i32;
+                        let drag = (160. * platform::display_scale(d.id())) as i32;
                         if let Some(helper) = &mut m.helper {
                             for command in [
                                 json!({"type":"sim","ev":"kdown","vk":164}),
                                 json!({"type":"sim","ev":"mdown","btn":"left","x":x,"y":y}),
-                                json!({"type":"sim","ev":"move","x":x + 160,"y":y}),
+                                json!({"type":"sim","ev":"move","x":x + drag,"y":y}),
                             ] {
                                 let _ = helper.send(&command);
                             }
@@ -621,7 +625,7 @@ pub fn run() -> Result<()> {
                     Timer::after(Duration::from_secs(2)).await;
                     let _ = model.update(cx, |m, _| {
                         if let Some(wheel) = &m.wheel {
-                            let x = f32::from(wheel.origin.x) as i32 + 160;
+                            let x = f32::from(wheel.origin.x) as i32 + (160. * wheel.scale) as i32;
                             let y = f32::from(wheel.origin.y) as i32;
                             if let Some(helper) = &mut m.helper {
                                 let _ = helper.send(
@@ -658,4 +662,53 @@ pub fn run() -> Result<()> {
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{local_position, slice_at};
+    use gpui::{point, px};
+    use std::prelude::v1::test;
+
+    #[test]
+    fn mixed_dpi_and_negative_monitor_origins_keep_local_positions() {
+        for (origin, scale) in [
+            (point(px(0.), px(0.)), 1.),
+            (point(px(1920.), px(0.)), 1.5),
+            (point(px(-3840.), px(-2160.)), 2.),
+        ] {
+            let cursor = origin + point(px(300. * scale), px(200. * scale));
+            assert_eq!(
+                local_position(cursor, origin, scale),
+                point(px(300.), px(200.))
+            );
+            assert_eq!(
+                slice_at(
+                    (f32::from(cursor.x) + 85. * scale) as i32,
+                    f32::from(cursor.y) as i32,
+                    cursor,
+                    scale
+                ),
+                None
+            );
+            assert_eq!(
+                slice_at(
+                    (f32::from(cursor.x) + 150. * scale) as i32,
+                    f32::from(cursor.y) as i32,
+                    cursor,
+                    scale
+                ),
+                Some(2)
+            );
+            assert_eq!(
+                slice_at(
+                    f32::from(cursor.x) as i32,
+                    (f32::from(cursor.y) - 150. * scale) as i32,
+                    cursor,
+                    scale
+                ),
+                Some(0)
+            );
+        }
+    }
 }
