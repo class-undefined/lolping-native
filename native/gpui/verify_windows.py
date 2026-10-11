@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -71,6 +72,24 @@ def verify_app(app, machine, working, env):
     return assets
 
 
+def gui_smoke(app, working, env, arch, label):
+    logs = RELEASE / "verification-logs"
+    logs.mkdir(exist_ok=True)
+    stdout = logs / f"windows-{arch}-{label}.stdout"
+    stderr = logs / f"windows-{arch}-{label}.log"
+    with stdout.open("w", encoding="utf-8") as output, stderr.open("w", encoding="utf-8") as errors:
+        process = subprocess.Popen([str(app / "lolping-native.exe"), "--smoke-test", "--mute"],
+            cwd=working, env=env, stdout=output, stderr=errors)
+        try:
+            code = process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], check=False)
+            code = -1
+    output = stderr.read_text(encoding="utf-8", errors="replace")
+    print(f"GUI probe {label}: exit {code}\n{output}")
+    return code == 0 and "Smoke test passed:" in output
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -92,29 +111,22 @@ def main():
         env = os.environ.copy()
         # Exclude developer tools and isolate user data. No Rust, Python or VC runtime
         # installation is allowed to rescue the installed application's PATH lookup.
-        env["PATH"] = str(pathlib.Path(os.environ["SYSTEMROOT"]) / "System32")
+        system = pathlib.Path(os.environ["SYSTEMROOT"])
+        env["PATH"] = os.pathsep.join([str(system / "System32"), str(system)])
         env["APPDATA"] = str(working / "用户配置")
-        env["LOCALAPPDATA"] = str(working / "本地配置")
         pathlib.Path(env["APPDATA"]).mkdir()
-        pathlib.Path(env["LOCALAPPDATA"]).mkdir()
+        # LOCALAPPDATA belongs to the Windows shell's actual user profile. Replacing
+        # it is not a clean app configuration and can break Windows 11 notifications.
         assets = verify_app(app, machine, working, env)
-        stdout = working / "gui.stdout"
-        stderr = working / "gui.stderr"
-        with stdout.open("w", encoding="utf-8") as output, stderr.open("w", encoding="utf-8") as errors:
-            process = subprocess.Popen([str(app / "lolping-native.exe"), "--smoke-test", "--mute"],
-                cwd=working, env=env, stdout=output, stderr=errors)
-            try:
-                code = process.wait(timeout=90)
-            except subprocess.TimeoutExpired:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], check=False)
-                raise RuntimeError("Installed GUI did not finish the smoke test") from None
-        output = stderr.read_text(encoding="utf-8", errors="replace")
-        logs = RELEASE / "verification-logs"
-        logs.mkdir(exist_ok=True)
-        (logs / f"windows-{args.arch}.log").write_text(f"GUI exit code: {code}\n{output}", encoding="utf-8")
-        print(output)
-        if code != 0 or "Smoke test passed:" not in output:
-            raise RuntimeError(f"Installed GUI smoke test failed (exit {code})")
+        if not gui_smoke(app, working, env, args.arch, "installed"):
+            # These probes diagnose a failure; they never substitute for acceptance
+            # of the installed program in a Unicode directory with a minimal PATH.
+            gui_smoke(app, working, os.environ.copy(), args.arch, "original-environment")
+            with tempfile.TemporaryDirectory(prefix="lolping-ascii-probe-") as probe:
+                copied = pathlib.Path(probe) / "app"
+                shutil.copytree(app, copied)
+                gui_smoke(copied, probe, os.environ.copy(), args.arch, "ascii-path")
+            raise RuntimeError("Installed GUI smoke test failed; see environment/path diagnostic probes")
         portable = working / "便携应用"
         with zipfile.ZipFile(archives[0]) as archive:
             archive.extractall(portable)
