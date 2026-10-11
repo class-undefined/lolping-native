@@ -95,6 +95,8 @@ def main():
         env["PATH"] = str(pathlib.Path(os.environ["SYSTEMROOT"]) / "System32")
         env["APPDATA"] = str(working / "用户配置")
         env["LOCALAPPDATA"] = str(working / "本地配置")
+        pathlib.Path(env["APPDATA"]).mkdir()
+        pathlib.Path(env["LOCALAPPDATA"]).mkdir()
         assets = verify_app(app, machine, working, env)
         stdout = working / "gui.stdout"
         stderr = working / "gui.stderr"

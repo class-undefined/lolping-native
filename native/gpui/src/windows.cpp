@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <cstdio>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -43,7 +44,13 @@ NOTIFYICONDATAW trayData() {
 
 void addTray() {
     auto data = trayData();
+    SetLastError(0);
     trayInstalled = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
+    if (!trayInstalled) {
+        std::fprintf(stderr, "Tray NIM_ADD failed: error=%lu size=%lu hwnd=%p icon=%p shell=%p\n",
+            GetLastError(), data.cbSize, static_cast<void*>(data.hWnd),
+            static_cast<void*>(data.hIcon), static_cast<void*>(FindWindowW(L"Shell_TrayWnd", nullptr)));
+    }
 }
 
 LRESULT CALLBACK trayProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
@@ -157,12 +164,18 @@ bool lp_init_status() {
     klass.lpfnWndProc = trayProc;
     klass.hInstance = instance;
     klass.lpszClassName = L"LolPingNativeTray";
-    if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return false;
+    if (!RegisterClassW(&klass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        std::fprintf(stderr, "Tray RegisterClass failed: %lu\n", GetLastError());
+        return false;
+    }
     taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     // A hidden top-level window receives Explorer's TaskbarCreated broadcast.
     trayWindow = CreateWindowExW(WS_EX_TOOLWINDOW, klass.lpszClassName, L"lolPing Native",
         WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, instance, nullptr);
-    if (!trayWindow) return false;
+    if (!trayWindow) {
+        std::fprintf(stderr, "Tray CreateWindow failed: %lu\n", GetLastError());
+        return false;
+    }
     addTray();
     return trayInstalled;
 }
